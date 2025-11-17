@@ -67,7 +67,6 @@ class ExcelWriter:
         result_df[price_column] = None
         result_df['Название на сайте'] = None
         result_df['Ссылка на товар'] = None
-        result_df['Дата парсинга'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         result_df['Статус'] = 'Не обработан'
         
         # Заполняем результатами
