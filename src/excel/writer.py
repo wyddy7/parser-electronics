@@ -177,7 +177,7 @@ class ExcelWriter:
                         cell.fill = self.STATUS_FOUND_FILL
                     elif status == 'Не найдено':
                         cell.fill = self.STATUS_NOT_FOUND_FILL
-                    elif status == 'Ошибка':
+                    elif status == 'Ошибка парсинга':
                         cell.fill = self.STATUS_ERROR_FILL
             
             # Автоподбор ширины колонок

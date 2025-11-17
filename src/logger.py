@@ -10,8 +10,8 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
     Настраивает structlog согласно конфигурации.
     
     Использует ProcessorFormatter для разных форматов:
-    - Консоль: цветной вывод (ConsoleRenderer)
-    - Файл: JSON формат (JSONRenderer)
+    - Консоль: формат из config.format ("json" или "console")
+    - Файл: всегда JSON формат (JSONRenderer)
     
     Args:
         config: Словарь с настройками логирования из config.yaml
@@ -22,7 +22,7 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
     log_level = config.get("level", "DEBUG").upper()
     console_enabled = config.get("console", True)
     log_file = config.get("file", "logs/parser.log")
-    log_format = config.get("format", "json")
+    log_format = config.get("format", "console").lower()  # Используем format из конфига
     
     # Создаем директорию для логов если не существует
     if log_file:
@@ -78,19 +78,32 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
         file_handler.setFormatter(file_formatter)
         std_logger.addHandler(file_handler)
     
-    # Добавляем обработчик для консоли с цветным форматированием
+    # Добавляем обработчик для консоли с форматированием из конфига
     if console_enabled:
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(getattr(logging, log_level, logging.DEBUG))
         
-        # ProcessorFormatter для консоли: цветной вывод
-        console_formatter = structlog.stdlib.ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                structlog.dev.ConsoleRenderer(colors=True),
-            ],
-            foreign_pre_chain=shared_processors,
-        )
+        # Выбираем формат для консоли на основе конфига
+        if log_format == "json":
+            # JSON формат для консоли (удобно для CI/CD, парсинга)
+            console_formatter = structlog.stdlib.ProcessorFormatter(
+                processors=[
+                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                    structlog.processors.dict_tracebacks,
+                    structlog.processors.JSONRenderer(),
+                ],
+                foreign_pre_chain=shared_processors,
+            )
+        else:
+            # Цветной консольный формат (по умолчанию)
+            console_formatter = structlog.stdlib.ProcessorFormatter(
+                processors=[
+                    structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                    structlog.dev.ConsoleRenderer(colors=True),
+                ],
+                foreign_pre_chain=shared_processors,
+            )
+        
         console_handler.setFormatter(console_formatter)
         std_logger.addHandler(console_handler)
     
