@@ -31,11 +31,11 @@ class ElectronpriborParser(BaseParser):
         self.min_similarity = self.search_config.get('min_similarity', 0.5)
         self.max_results = self.search_config.get('max_results', 5)
         
-        # Возможные варианты URL поиска (нужно проверить реальный)
+        # Возможные варианты URL поиска
+        # Правильный формат: /search/?type_search=catalog&q=...
         self.search_patterns = [
+            f"{self.base_url}/search/?type_search=catalog&q={{query}}",
             f"{self.base_url}/search/?q={{query}}",
-            f"{self.base_url}/search/?query={{query}}",
-            f"{self.base_url}/search/{{query}}",
             f"{self.base_url}/?s={{query}}",
         ]
     
@@ -88,17 +88,16 @@ class ElectronpriborParser(BaseParser):
     def _normalize_search_query(self, product_name: str) -> str:
         """
         Нормализует название товара для поискового запроса.
+        Заменяет пробелы на + для URL encoding.
         
         Args:
             product_name: Исходное название
             
         Returns:
-            Нормализованное название
+            Нормализованное название с + вместо пробелов
         """
-        # Убираем лишние пробелы
-        query = ' '.join(product_name.split())
-        
-        # URL-кодирование через requests сделается автоматически
+        # Убираем лишние пробелы и заменяем на +
+        query = '+'.join(product_name.split())
         return query
     
     def _search_with_url(self, search_url: str, original_name: str) -> Optional[Dict[str, Any]]:
@@ -321,11 +320,32 @@ class ElectronpriborParser(BaseParser):
         Returns:
             True если артикулы совпадают ТОЧНО и модификации совпадают (если есть)
         """
-        # Извлекаем артикулы (первое слово)
+        # Извлекаем артикулы
+        # Артикул обычно в формате: буквы-цифры или буквы/цифры (например "АКИП-3404", "Е6-32")
+        # Паттерн: буквы + дефис/слэш + цифры + возможно еще цифры/слэш/цифры
+        # НО останавливаемся на первой букве после цифр (если она не часть артикула типа "/1")
+        article_pattern = re.compile(r'^([А-ЯA-ZЁ]+[-/]?[0-9]+(?:[/-][0-9]+[А-ЯA-ZЁ]*)?)', re.IGNORECASE)
+        
+        # Извлекаем артикул из оригинального названия (первое слово до пробела)
         original_code = original.split()[0] if original else ""
-        # Для найденного берем до запятой, затем первое слово
+        
+        # Для найденного: берем до запятой, затем извлекаем артикул по паттерну
         found_parts = found.split(',')
-        found_code = found_parts[0].split()[0] if found_parts else ""
+        found_text = found_parts[0].strip() if found_parts else ""
+        
+        # Извлекаем артикул из найденного текста по паттерну
+        match = article_pattern.match(found_text)
+        if match:
+            found_code = match.group(1)
+        else:
+            # Если паттерн не сработал, пробуем взять до первого пробела или до первой буквы после цифр
+            # Например "АКИП-3404Arb" -> "АКИП-3404"
+            parts = re.split(r'([А-ЯA-ZЁ]+)', found_text, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) > 1 and parts[0]:
+                # Берем часть до первой буквы после цифр
+                found_code = parts[0].rstrip('-/')
+            else:
+                found_code = found_text.split()[0] if found_text else ""
         
         # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы)
         orig_normalized = original_code.lower().replace(' ', '').strip()
