@@ -1,0 +1,36 @@
+/output
+/.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Логи (генерируются автоматически)
+/logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Входные данные (если не нужны в репозитории)
+# jshopping_export_*.xlsx
+
+# Временные файлы
+*.tmp
+*.bak
+*.cache
+
+*.xlsx
+*.xls

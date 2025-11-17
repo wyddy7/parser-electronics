@@ -1,0 +1,41 @@
+parser:
+  electronpribor:
+    enabled: true
+    base_url: "https://www.electronpribor.ru"
+    delays:
+      between_requests: 1.5  # секунды
+    retry:
+      total: 3               # Количество повторов
+      backoff_factor: 0.3    # 0.3, 0.6, 1.2 секунды
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 10              # Таймаут запроса (секунды)
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # ПРИМЕР: Добавление нового парсера
+  pristru:
+    enabled: false  # Пока не реализован
+    base_url: "https://pristru.ru"
+    delays:
+      between_requests: 2.0
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 10
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+excel:
+  input_file: "jshopping_export_2025-11-06_20-07-59.xlsx"
+  output_dir: "output"
+  name_column: "name_ru-RU"  # Колонка с названием товара
+
+search:
+  min_similarity: 0.85  # DEPRECATED: больше не используется (оставлено для совместимости)
+  max_results: 5       # Сколько результатов поиска проверять
+
+logging:
+  level: "DEBUG"           # DEBUG для разработки
+  console: true            # Вывод в консоль
+  file: "logs/parser.log"  # Файл для логов
+  format: "json"           # json для production, console для dev
+
