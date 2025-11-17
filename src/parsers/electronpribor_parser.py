@@ -217,6 +217,7 @@ class ElectronpriborParser(BaseParser):
         # В electronpribor.ru: <noindex><p>49&nbsp;000 ₽</p></noindex>
         # ВАЖНО: Берем ПЕРВЫЙ <p>, игнорируем текст после первого ₽
         price = None
+        full_text = ""
         noindex_elem = product_element.select_one('noindex')
         if noindex_elem:
             # Берём весь текст из noindex
@@ -229,29 +230,32 @@ class ElectronpriborParser(BaseParser):
                 first_price_text = full_text.split('руб')[0] + 'руб'
                 price = self._extract_price_value(first_price_text)
         
-        if price:
-            info['price'] = price
-            self.log.debug("price_extracted",
-                          name=name,
-                          price=price,
-                          raw_text=price_text if 'price_text' in locals() else None)
-        else:
+        # Если цена не найдена, ищем текст статуса во всем элементе товара
+        if not price:
+            # Берем весь текст элемента для поиска статуса
+            element_text = product_element.get_text(separator=' ', strip=True).lower()
+            full_text_lower = full_text.lower() if full_text else element_text
+            
             # Проверяем есть ли текст "по запросу" или "уточняйте"
-            full_text_lower = full_text.lower() if 'full_text' in locals() else ""
-            if any(phrase in full_text_lower for phrase in ['по запросу', 'уточняйте', 'запросить', 'уточнить', 'по запросу', 'запрос']):
+            if any(phrase in full_text_lower or phrase in element_text for phrase in ['по запросу', 'уточняйте', 'запросить', 'уточнить', 'запрос']):
                 # Цена по запросу
                 info['price'] = -2.0  # Специальное значение
                 self.log.debug("price_on_request", 
                               name=name,
                               status="Цена по запросу",
-                              raw_text=full_text)
+                              raw_text=full_text or element_text[:100])
             else:
                 # Снят с производства или без цены
                 info['price'] = None
                 self.log.debug("price_not_found", 
                               name=name,
                               status="Снят с производства или без цены",
-                              raw_text=full_text if 'full_text' in locals() else None)
+                              raw_text=full_text or element_text[:100] if full_text or element_text else None)
+        else:
+            info['price'] = price
+            self.log.debug("price_extracted",
+                          name=name,
+                          price=price)
         
         # Извлекаем ссылку на товар
         # В electronpribor.ru: <a class="search-stat-link">
