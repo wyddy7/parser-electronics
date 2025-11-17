@@ -66,12 +66,12 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
         file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='a')
         file_handler.setLevel(getattr(logging, log_level, logging.DEBUG))
         
-        # ProcessorFormatter для файла: JSON формат
+        # ProcessorFormatter для файла: JSON формат с поддержкой Unicode
         file_formatter = structlog.stdlib.ProcessorFormatter(
             processors=[
                 structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                 structlog.processors.dict_tracebacks,
-                structlog.processors.JSONRenderer(),
+                structlog.processors.JSONRenderer(ensure_ascii=False),
             ],
             foreign_pre_chain=shared_processors,
         )
@@ -85,12 +85,12 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
         
         # Выбираем формат для консоли на основе конфига
         if log_format == "json":
-            # JSON формат для консоли (удобно для CI/CD, парсинга)
+            # JSON формат для консоли (удобно для CI/CD, парсинга) с поддержкой Unicode
             console_formatter = structlog.stdlib.ProcessorFormatter(
                 processors=[
                     structlog.stdlib.ProcessorFormatter.remove_processors_meta,
                     structlog.processors.dict_tracebacks,
-                    structlog.processors.JSONRenderer(),
+                    structlog.processors.JSONRenderer(ensure_ascii=False),
                 ],
                 foreign_pre_chain=shared_processors,
             )
