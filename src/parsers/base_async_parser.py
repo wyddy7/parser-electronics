@@ -1,5 +1,6 @@
 """Асинхронный базовый класс для всех парсеров с httpx.AsyncClient и retry механизмом"""
 import asyncio
+import time
 import httpx
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
@@ -38,6 +39,7 @@ class AsyncBaseParser(ABC):
         async_config = config.get('async', {})
         self.max_concurrent = async_config.get('max_concurrent', 50)
         self.connection_pool_size = async_config.get('connection_pool_size', 100)
+        self.request_delay = async_config.get('request_delay', 0.5)  # Задержка между запросами
         
         # Retry настройки
         retry_config = config.get('retry', {})
@@ -48,12 +50,14 @@ class AsyncBaseParser(ABC):
         self.log = logger.bind(parser=self.__class__.__name__)
         self.client: Optional[AsyncClient] = None
         self.semaphore: Optional[asyncio.Semaphore] = None
+        self.last_request_time = 0.0  # Для отслеживания времени последнего запроса
         
         self.log.info("async_parser_initialized",
                      base_url=self.base_url,
                      timeout=self.timeout,
                      max_concurrent=self.max_concurrent,
-                     connection_pool_size=self.connection_pool_size)
+                     connection_pool_size=self.connection_pool_size,
+                     request_delay=self.request_delay)
     
     async def _create_client(self) -> AsyncClient:
         """
@@ -96,6 +100,17 @@ class AsyncBaseParser(ABC):
         
         return client
     
+    async def _apply_delay(self):
+        """Применяет задержку между запросами для снижения нагрузки на сервер"""
+        if self.request_delay > 0 and self.last_request_time > 0:
+            elapsed = time.time() - self.last_request_time
+            if elapsed < self.request_delay:
+                sleep_time = self.request_delay - elapsed
+                self.log.debug("applying_delay", sleep_seconds=sleep_time)
+                await asyncio.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+    
     async def _make_request_with_retry(
         self, 
         url: str, 
@@ -113,6 +128,9 @@ class AsyncBaseParser(ABC):
         Returns:
             Response объект или None в случае ошибки
         """
+        # Применяем задержку между запросами
+        await self._apply_delay()
+        
         # Используем Semaphore для rate limiting
         if self.semaphore:
             async with self.semaphore:

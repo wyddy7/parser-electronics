@@ -147,7 +147,20 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
         
         # Обрабатываем товары (async или sync)
         if use_async:
-            results = asyncio.run(_process_products_async(parser_instance, df, total_products, log))
+            # Получаем параметры батчинга из конфига
+            batch_size = async_config.get('batch_size', 30)
+            checkpoint_interval = async_config.get('checkpoint_interval', 50)
+            batch_delay = async_config.get('batch_delay', 4)
+            
+            # Подготавливаем writer для промежуточного сохранения
+            output_dir = excel_config.get('output_dir', 'output')
+            writer = ExcelWriter(output_dir)
+            
+            results = asyncio.run(_process_products_async(
+                parser_instance, df, total_products, log,
+                excel_config, writer, output, parser_name,
+                batch_size, checkpoint_interval, batch_delay
+            ))
         else:
             results = _process_products_sync(parser_instance, df, total_products, log)
         
@@ -198,8 +211,11 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
         sys.exit(1)
         
     except KeyboardInterrupt:
-        click.echo("\n\nПрервано пользователем")
-        log.warning("interrupted_by_user")
+        # Обработка KeyboardInterrupt уже происходит в _process_products_async
+        # Здесь просто завершаем
+        click.echo("\n\nЗавершение работы...")
+        if 'log' in locals():
+            log.warning("interrupted_by_user")
         sys.exit(130)
         
     except Exception as e:
@@ -249,8 +265,14 @@ def _process_products_sync(parser_instance, df, total_products, log):
     return results
 
 
-async def _process_products_async(parser_instance, df, total_products, log):
-    """Асинхронная обработка товаров с параллельными запросами"""
+async def _process_products_async(
+    parser_instance, df, total_products, log,
+    excel_config, writer, output, parser_name,
+    batch_size, checkpoint_interval, batch_delay
+):
+    """Асинхронная обработка товаров с батчингом и промежуточным сохранением"""
+    from datetime import datetime
+    
     results = {}
     
     async def process_single_product(idx, row):
@@ -284,22 +306,79 @@ async def _process_products_async(parser_instance, df, total_products, log):
                     error_type=type(e).__name__)
             return product_name, None
     
-    # Создаем задачи для всех товаров
+    def save_checkpoint(current_results, completed_count):
+        """Сохраняет промежуточные результаты"""
+        try:
+            checkpoint_filename = f"checkpoint_{parser_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            checkpoint_path = writer.write_results(df, current_results, checkpoint_filename, parser_name=parser_name)
+            log.info("checkpoint_saved", 
+                    completed=completed_count, 
+                    total=total_products,
+                    file=checkpoint_filename)
+            click.echo(f"\n[CHECKPOINT] Сохранено {completed_count}/{total_products} товаров: {checkpoint_filename}")
+            return checkpoint_path
+        except Exception as e:
+            log.error("checkpoint_failed", error=str(e), error_type=type(e).__name__)
+            return None
+    
+    # Обрабатываем по батчам
     async with parser_instance:
-        tasks = [
-            process_single_product(idx, row)
-            for idx, row in df.iterrows()
-        ]
-        
-        # Выполняем все задачи параллельно с прогресс-баром
+        all_rows = list(df.iterrows())
         completed = 0
+        last_checkpoint = 0
+        
         with tqdm(total=total_products, desc="Парсинг товаров") as pbar:
-            # Используем asyncio.as_completed для обновления прогресс-бара
-            for coro in asyncio.as_completed(tasks):
-                product_name, result = await coro
-                results[product_name] = result
-                completed += 1
-                pbar.update(1)
+            try:
+                # Разбиваем на батчи
+                for batch_start in range(0, len(all_rows), batch_size):
+                    batch = all_rows[batch_start:batch_start + batch_size]
+                    batch_num = (batch_start // batch_size) + 1
+                    total_batches = (len(all_rows) + batch_size - 1) // batch_size
+                    
+                    log.debug("batch_started",
+                             batch_num=batch_num,
+                             total_batches=total_batches,
+                             batch_size=len(batch))
+                    
+                    # Создаем задачи для текущего батча
+                    tasks = [
+                        process_single_product(idx, row)
+                        for idx, row in batch
+                    ]
+                    
+                    # Обрабатываем батч
+                    for coro in asyncio.as_completed(tasks):
+                        product_name, result = await coro
+                        results[product_name] = result
+                        completed += 1
+                        pbar.update(1)
+                        
+                        # Сохраняем checkpoint каждые N товаров
+                        if completed - last_checkpoint >= checkpoint_interval:
+                            save_checkpoint(results.copy(), completed)
+                            last_checkpoint = completed
+                    
+                    # Пауза между батчами (чтобы не перегружать сервер)
+                    if batch_start + batch_size < len(all_rows):
+                        log.debug("batch_completed",
+                                 batch_num=batch_num,
+                                 completed=completed,
+                                 total=total_products)
+                        await asyncio.sleep(batch_delay)
+                
+                # Финальное сохранение checkpoint
+                if completed > last_checkpoint:
+                    save_checkpoint(results, completed)
+                    
+            except KeyboardInterrupt:
+                click.echo("\n\n[ПРЕРВАНО] Сохранение промежуточных результатов...")
+                if completed > 0:
+                    final_checkpoint = save_checkpoint(results, completed)
+                    click.echo(f"[СОХРАНЕНО] Обработано {completed}/{total_products} товаров")
+                    if final_checkpoint:
+                        click.echo(f"[ФАЙЛ] {final_checkpoint}")
+                log.warning("interrupted_by_user", completed=completed, total=total_products)
+                raise
     
     return results
 
