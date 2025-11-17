@@ -169,6 +169,12 @@ def _auto_register():
         register_async_parser('electronpribor', ElectronpriborAsyncParser)
     except ImportError:
         pass
+    
+    try:
+        from .prist_async_parser import PristAsyncParser
+        register_async_parser('prist', PristAsyncParser)
+    except ImportError:
+        pass
 
 
 _auto_register()
