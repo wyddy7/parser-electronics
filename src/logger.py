@@ -3,6 +3,7 @@ import sys
 import logging
 import structlog
 from pathlib import Path
+from tqdm import tqdm
 
 
 def configure_logging(config: dict) -> structlog.BoundLogger:
@@ -80,7 +81,8 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
     
     # Добавляем обработчик для консоли с форматированием из конфига
     if console_enabled:
-        console_handler = logging.StreamHandler(sys.stderr)
+        # Используем кастомный handler, который работает с tqdm
+        console_handler = TqdmLoggingHandler()
         console_handler.setLevel(getattr(logging, log_level, logging.DEBUG))
         
         # Выбираем формат для консоли на основе конфига
@@ -108,6 +110,22 @@ def configure_logging(config: dict) -> structlog.BoundLogger:
         std_logger.addHandler(console_handler)
     
     return structlog.get_logger()
+
+
+class TqdmLoggingHandler(logging.StreamHandler):
+    """
+    Кастомный обработчик логирования, который использует tqdm.write()
+    для безопасного вывода логов, не мешая прогресс-бару.
+    """
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Используем tqdm.write() для безопасного вывода
+            # nolock=True ускоряет вывод и уменьшает мерцание
+            # end='' предотвращает добавление лишних переносов строк
+            tqdm.write(msg, file=sys.stderr, end='', nolock=True)
+        except Exception:
+            self.handleError(record)
 
 
 def get_logger(name: str = None) -> structlog.BoundLogger:

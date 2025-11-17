@@ -237,7 +237,17 @@ def _process_products_sync(parser_instance, df, total_products, log):
     results = {}
     
     with parser_instance:
-        for idx, row in tqdm(df.iterrows(), total=total_products, desc="Парсинг товаров"):
+        for idx, row in tqdm(
+            df.iterrows(), 
+            total=total_products, 
+            desc="Парсинг товаров",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            maxinterval=1.0,
+            smoothing=0.3,
+            leave=True
+        ):
             product_name = row.get('product_name', '')
             
             if not product_name or product_name == 'nan':
@@ -389,7 +399,16 @@ async def _process_products_async(
         completed = 0
         last_checkpoint = 0
         
-        with tqdm(total=total_products, desc="Парсинг товаров") as pbar:
+        with tqdm(
+            total=total_products, 
+            desc="Парсинг товаров",
+            file=sys.stdout,
+            dynamic_ncols=True,
+            mininterval=0.5,
+            maxinterval=1.0,
+            smoothing=0.3,
+            leave=True
+        ) as pbar:
             try:
                 # Разбиваем на батчи
                 for batch_start in range(0, len(all_rows), batch_size):
