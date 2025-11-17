@@ -32,8 +32,8 @@ async def test_search():
     # Создаем парсер
     parser_instance = create_async_parser('electronpribor', parser_config, log, search_config)
     
-    # Тестовый товар - проверяем проблемный случай с латинской A
-    test_product = "AКИП-3404 Генератор  Arb-Студия (c опцией D)"
+    # Тестовый товар - проверяем проблемный случай с В7-78/2
+    test_product = "В7-78/2 Вольтметр"
     
     print(f"\n{'='*80}")
     print(f"Тестируем поиск товара:")
