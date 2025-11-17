@@ -333,8 +333,24 @@ class ElectronpriborParser(BaseParser):
         # Паттерн: (буквы ИЛИ буква+цифра) + дефис + цифры + возможно слэш+цифра
         article_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
         
-        # Извлекаем артикул из оригинального названия (первое слово до пробела)
-        original_code = original.split()[0] if original else ""
+        # Извлекаем артикул из оригинального названия
+        # Сначала пробуем извлечь по паттерну (учитывает пробелы в артикуле типа "АКИП 9806/3")
+        original_text = original if original else ""
+        # Убираем пробелы для поиска артикула (АКИП 9806/3 -> АКИП9806/3, но паттерн ищет с дефисом/слэшем)
+        # Пробуем найти артикул в начале строки, учитывая что может быть пробел
+        original_match = article_pattern.match(original_text.replace(' ', ''))
+        if original_match:
+            original_code = original_match.group(1)
+        else:
+            # Если не нашли, пробуем найти артикул с пробелом (АКИП 9806/3)
+            # Паттерн для артикула с пробелом: буквы + пробел? + цифры? + дефис/слэш + цифры + слэш? + цифры?
+            spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+            spaced_match = spaced_pattern.match(original_text)
+            if spaced_match:
+                original_code = spaced_match.group(1).replace(' ', '')  # Убираем пробел для нормализации
+            else:
+                # Fallback: первое слово
+                original_code = original_text.split()[0] if original_text else ""
         
         # Для найденного: берем до запятой, затем извлекаем артикул по паттерну
         found_parts = found.split(',')
@@ -354,10 +370,11 @@ class ElectronpriborParser(BaseParser):
             else:
                 found_code = found_text.split()[0] if found_text else ""
         
-        # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы)
+        # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы и дефисы)
         # Также заменяем латинскую A на кириллическую А для унификации
-        orig_normalized = original_code.lower().replace(' ', '').replace('a', 'а').strip()
-        found_normalized = found_code.lower().replace(' ', '').replace('a', 'а').strip()
+        # Убираем дефисы и пробелы, чтобы "АКИП-9806/3" и "АКИП 9806/3" совпадали
+        orig_normalized = original_code.lower().replace(' ', '').replace('-', '').replace('a', 'а').strip()
+        found_normalized = found_code.lower().replace(' ', '').replace('-', '').replace('a', 'а').strip()
         
         # ПРОВЕРКА 1: ТОЧНОЕ совпадение базового артикула
         if orig_normalized != found_normalized:
