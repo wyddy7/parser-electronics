@@ -346,8 +346,9 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
                 found_code = found_text.split()[0] if found_text else ""
         
         # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы)
-        orig_normalized = original_code.lower().replace(' ', '').strip()
-        found_normalized = found_code.lower().replace(' ', '').strip()
+        # Также заменяем латинскую A на кириллическую А для унификации
+        orig_normalized = original_code.lower().replace(' ', '').replace('a', 'а').strip()
+        found_normalized = found_code.lower().replace(' ', '').replace('a', 'а').strip()
         
         # ПРОВЕРКА 1: ТОЧНОЕ совпадение базового артикула
         if orig_normalized != found_normalized:
