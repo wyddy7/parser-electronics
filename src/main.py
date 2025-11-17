@@ -152,13 +152,18 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
             checkpoint_interval = async_config.get('checkpoint_interval', 50)
             batch_delay = async_config.get('batch_delay', 4)
             
-            # Подготавливаем writer для промежуточного сохранения
+            # Подготавливаем writer для финального сохранения
             output_dir = excel_config.get('output_dir', 'output')
             writer = ExcelWriter(output_dir)
             
+            # Создаем отдельный writer для checkpoint'ов в output/temp
+            temp_dir = Path(output_dir) / 'temp'
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint_writer = ExcelWriter(str(temp_dir))
+            
             results = asyncio.run(_process_products_async(
                 parser_instance, df, total_products, log,
-                excel_config, writer, output, parser_name,
+                excel_config, writer, checkpoint_writer, output, parser_name,
                 batch_size, checkpoint_interval, batch_delay
             ))
         else:
@@ -267,13 +272,17 @@ def _process_products_sync(parser_instance, df, total_products, log):
 
 async def _process_products_async(
     parser_instance, df, total_products, log,
-    excel_config, writer, output, parser_name,
+    excel_config, writer, checkpoint_writer, output, parser_name,
     batch_size, checkpoint_interval, batch_delay
 ):
     """Асинхронная обработка товаров с батчингом и промежуточным сохранением"""
     from datetime import datetime
+    from pathlib import Path
     
     results = {}
+    # temp находится внутри output директории
+    output_dir = excel_config.get('output_dir', 'output')
+    temp_dir = Path(output_dir) / 'temp'
     
     async def process_single_product(idx, row):
         """Обработка одного товара"""
@@ -306,16 +315,69 @@ async def _process_products_async(
                     error_type=type(e).__name__)
             return product_name, None
     
+    def cleanup_old_checkpoints(keep_last=1):
+        """Удаляет старые checkpoint файлы из temp, оставляя только последние N"""
+        try:
+            if not temp_dir.exists():
+                return
+                
+            checkpoint_files_list = sorted(
+                temp_dir.glob(f"checkpoint_{parser_name}_*.xlsx"),
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            
+            # Удаляем все кроме последних N
+            deleted_count = 0
+            for old_file in checkpoint_files_list[keep_last:]:
+                try:
+                    old_file.unlink()
+                    deleted_count += 1
+                    log.debug("old_checkpoint_deleted", file=str(old_file))
+                except Exception as e:
+                    log.warning("checkpoint_delete_failed", file=str(old_file), error=str(e))
+            
+            if deleted_count > 0:
+                log.debug("old_checkpoints_cleaned", deleted_count=deleted_count)
+        except Exception as e:
+            log.warning("checkpoint_cleanup_failed", error=str(e))
+    
+    def delete_all_checkpoints():
+        """Удаляет все checkpoint файлы из temp после успешного завершения"""
+        try:
+            if not temp_dir.exists():
+                return
+                
+            checkpoint_files_list = list(temp_dir.glob(f"checkpoint_{parser_name}_*.xlsx"))
+            
+            deleted_count = 0
+            for checkpoint_file in checkpoint_files_list:
+                try:
+                    checkpoint_file.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    log.warning("checkpoint_delete_failed", file=str(checkpoint_file), error=str(e))
+            
+            if deleted_count > 0:
+                log.info("checkpoints_cleaned", deleted_count=deleted_count)
+                click.echo(f"\n[ОЧИСТКА] Удалено {deleted_count} checkpoint файлов из temp")
+        except Exception as e:
+            log.warning("checkpoint_cleanup_failed", error=str(e))
+    
     def save_checkpoint(current_results, completed_count):
-        """Сохраняет промежуточные результаты"""
+        """Сохраняет промежуточные результаты в temp"""
         try:
             checkpoint_filename = f"checkpoint_{parser_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            checkpoint_path = writer.write_results(df, current_results, checkpoint_filename, parser_name=parser_name)
+            checkpoint_path = checkpoint_writer.write_results(df, current_results, checkpoint_filename, parser_name=parser_name)
+            
+            # Удаляем старые checkpoint'ы, оставляя только последний
+            cleanup_old_checkpoints(keep_last=1)
+            
             log.info("checkpoint_saved", 
                     completed=completed_count, 
                     total=total_products,
                     file=checkpoint_filename)
-            click.echo(f"\n[CHECKPOINT] Сохранено {completed_count}/{total_products} товаров: {checkpoint_filename}")
+            click.echo(f"\n[CHECKPOINT] Сохранено {completed_count}/{total_products} товаров в temp: {checkpoint_filename}")
             return checkpoint_path
         except Exception as e:
             log.error("checkpoint_failed", error=str(e), error_type=type(e).__name__)
@@ -369,6 +431,9 @@ async def _process_products_async(
                 # Финальное сохранение checkpoint
                 if completed > last_checkpoint:
                     save_checkpoint(results, completed)
+                
+                # Удаляем все checkpoint'ы после успешного завершения
+                delete_all_checkpoints()
                     
             except KeyboardInterrupt:
                 click.echo("\n\n[ПРЕРВАНО] Сохранение промежуточных результатов...")
@@ -377,6 +442,7 @@ async def _process_products_async(
                     click.echo(f"[СОХРАНЕНО] Обработано {completed}/{total_products} товаров")
                     if final_checkpoint:
                         click.echo(f"[ФАЙЛ] {final_checkpoint}")
+                    click.echo("[ВНИМАНИЕ] Checkpoint файлы НЕ удалены (парсинг прерван)")
                 log.warning("interrupted_by_user", completed=completed, total=total_products)
                 raise
     
