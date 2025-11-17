@@ -3,7 +3,11 @@ parser:
     enabled: true
     base_url: "https://www.electronpribor.ru"
     delays:
-      between_requests: 1.5  # секунды
+      between_requests: 1.5  # секунды (для синхронной версии)
+    async:
+      enabled: true          # Использовать асинхронную версию
+      max_concurrent: 50     # Максимум одновременных запросов (для 8000 товаров оптимально 50-100)
+      connection_pool_size: 100  # Размер пула соединений
     retry:
       total: 3               # Количество повторов
       backoff_factor: 0.3    # 0.3, 0.6, 1.2 секунды

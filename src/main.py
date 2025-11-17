@@ -1,6 +1,7 @@
 """Главный CLI модуль для запуска парсера"""
 import click
 import sys
+import asyncio
 from pathlib import Path
 from typing import Optional
 from tqdm import tqdm
@@ -9,7 +10,7 @@ from config_loader import ConfigLoader
 from logger import configure_logging, get_logger
 from excel.reader import ExcelReader
 from excel.writer import ExcelWriter
-from parsers.factory import create_parser
+from parsers.factory import create_parser, create_async_parser
 
 
 @click.command()
@@ -116,51 +117,39 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
         # Получаем конфигурацию поиска
         search_config = config_loader.get_search_config()
         
+        # Проверяем, нужно ли использовать async версию
+        async_config = parser_config.get('async', {})
+        use_async = async_config.get('enabled', False)
+        
         click.echo(f"\nИспользуется парсер: {parser_name}")
+        if use_async:
+            max_concurrent = async_config.get('max_concurrent', 50)
+            click.echo(f"[ASYNC] Асинхронный режим: до {max_concurrent} одновременных запросов")
+        else:
+            click.echo("[SYNC] Синхронный режим")
         
         # Пытаемся создать парсер
         try:
-            parser_instance = create_parser(parser_name, parser_config, log, search_config)
+            if use_async:
+                parser_instance = create_async_parser(parser_name, parser_config, log, search_config)
+            else:
+                parser_instance = create_parser(parser_name, parser_config, log, search_config)
         except ValueError as e:
             click.echo(f"ERROR Не удалось создать парсер '{parser_name}': {e}", err=True)
-            click.echo(f"      Убедитесь, что файл src/parsers/{parser_name}_parser.py существует", err=True)
+            if use_async:
+                click.echo(f"      Убедитесь, что файл src/parsers/{parser_name}_async_parser.py существует", err=True)
+            else:
+                click.echo(f"      Убедитесь, что файл src/parsers/{parser_name}_parser.py существует", err=True)
             log.error("parser_creation_failed", parser_name=parser_name, error=str(e))
             sys.exit(1)
         
         click.echo("\nНачинаем парсинг цен...")
-        results = {}
         
-        # Обрабатываем каждый товар с прогресс-баром
-        with parser_instance:
-            for idx, row in tqdm(df.iterrows(), total=total_products, desc="Парсинг товаров"):
-                product_name = row.get('product_name', '')
-                
-                if not product_name or product_name == 'nan':
-                    log.debug("skipping_empty_product", index=idx)
-                    results[product_name] = None
-                    continue
-                
-                try:
-                    # Ищем товар на сайте
-                    product_log = log.bind(product=product_name, index=idx)
-                    product_log.debug("processing_product")
-                    
-                    result = parser_instance.search_product(product_name)
-                    results[product_name] = result
-                    
-                    if result:
-                        product_log.info("product_found", 
-                                       price=result.get('price'),
-                                       found_name=result.get('name'))
-                    else:
-                        product_log.warning("product_not_found")
-                
-                except Exception as e:
-                    log.error("processing_error",
-                            product=product_name,
-                            error=str(e),
-                            error_type=type(e).__name__)
-                    results[product_name] = None
+        # Обрабатываем товары (async или sync)
+        if use_async:
+            results = asyncio.run(_process_products_async(parser_instance, df, total_products, log))
+        else:
+            results = _process_products_sync(parser_instance, df, total_products, log)
         
         click.echo("\nOK Парсинг завершен!")
         
@@ -220,6 +209,99 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
                      error=str(e),
                      error_type=type(e).__name__)
         sys.exit(1)
+
+
+def _process_products_sync(parser_instance, df, total_products, log):
+    """Синхронная обработка товаров"""
+    results = {}
+    
+    with parser_instance:
+        for idx, row in tqdm(df.iterrows(), total=total_products, desc="Парсинг товаров"):
+            product_name = row.get('product_name', '')
+            
+            if not product_name or product_name == 'nan':
+                log.debug("skipping_empty_product", index=idx)
+                results[product_name] = None
+                continue
+            
+            try:
+                # Ищем товар на сайте
+                product_log = log.bind(product=product_name, index=idx)
+                product_log.debug("processing_product")
+                
+                result = parser_instance.search_product(product_name)
+                results[product_name] = result
+                
+                if result:
+                    product_log.info("product_found", 
+                                   price=result.get('price'),
+                                   found_name=result.get('name'))
+                else:
+                    product_log.warning("product_not_found")
+            
+            except Exception as e:
+                log.error("processing_error",
+                        product=product_name,
+                        error=str(e),
+                        error_type=type(e).__name__)
+                results[product_name] = None
+    
+    return results
+
+
+async def _process_products_async(parser_instance, df, total_products, log):
+    """Асинхронная обработка товаров с параллельными запросами"""
+    results = {}
+    
+    async def process_single_product(idx, row):
+        """Обработка одного товара"""
+        product_name = row.get('product_name', '')
+        
+        if not product_name or product_name == 'nan':
+            log.debug("skipping_empty_product", index=idx)
+            return product_name, None
+        
+        try:
+            # Ищем товар на сайте
+            product_log = log.bind(product=product_name, index=idx)
+            product_log.debug("processing_product")
+            
+            result = await parser_instance.search_product(product_name)
+            
+            if result:
+                product_log.info("product_found", 
+                               price=result.get('price'),
+                               found_name=result.get('name'))
+            else:
+                product_log.warning("product_not_found")
+            
+            return product_name, result
+        
+        except Exception as e:
+            log.error("processing_error",
+                    product=product_name,
+                    error=str(e),
+                    error_type=type(e).__name__)
+            return product_name, None
+    
+    # Создаем задачи для всех товаров
+    async with parser_instance:
+        tasks = [
+            process_single_product(idx, row)
+            for idx, row in df.iterrows()
+        ]
+        
+        # Выполняем все задачи параллельно с прогресс-баром
+        completed = 0
+        with tqdm(total=total_products, desc="Парсинг товаров") as pbar:
+            # Используем asyncio.as_completed для обновления прогресс-бара
+            for coro in asyncio.as_completed(tasks):
+                product_name, result = await coro
+                results[product_name] = result
+                completed += 1
+                pbar.update(1)
+    
+    return results
 
 
 if __name__ == '__main__':
