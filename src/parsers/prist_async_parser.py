@@ -320,13 +320,12 @@ class PristAsyncParser(AsyncBaseParser):
                 
                 # Fallback: извлекаем из текста
                 price_text = price_block_1.get_text(strip=True)
-                price_text = price_text.replace('\xa0', ' ')  # &nbsp;
                 
                 self.log.debug("price_found_in_block1",
                               url=product_url,
                               raw_text=price_text)
                 
-                price = self._extract_price_value(price_text)
+                price = self._extract_price_value_universal(price_text)
                 if price:
                     return price
         
@@ -346,44 +345,6 @@ class PristAsyncParser(AsyncBaseParser):
                         url=product_url,
                         reason="надпись 'Цена (с НДС):' отсутствует, цена не указана")
         return None
-    
-    def _extract_price_value(self, price_text: str) -> Optional[float]:
-        """
-        Извлекает числовое значение цены из текста.
-        
-        Формат prist.ru: "5 700 ₽" (пробелы как разделители тысяч)
-        
-        Args:
-            price_text: Текст с ценой (например "5 700 ₽" или "52 647 ₽")
-            
-        Returns:
-            Цена как float или None
-        """
-        if not price_text:
-            return None
-        
-        # Если есть диапазон цен (тире), берем ТОЛЬКО ПЕРВУЮ цену
-        if '—' in price_text or ' - ' in price_text:
-            price_text = re.split(r'[—\-]', price_text)[0]
-        
-        # Удаляем все кроме цифр, запятых и точек
-        # В prist.ru формат "5 700 ₽" - пробелы нужно убрать
-        cleaned = re.sub(r'[^\d,.]', '', price_text)
-        
-        # Заменяем запятую на точку
-        cleaned = cleaned.replace(',', '.')
-        
-        # Убираем лишние точки (оставляем только последнюю для десятичных)
-        parts = cleaned.split('.')
-        if len(parts) > 2:
-            cleaned = ''.join(parts[:-1]) + '.' + parts[-1]
-        
-        try:
-            price = float(cleaned)
-            return price if price > 0 else None
-        except ValueError:
-            self.log.debug("price_parse_failed", text=price_text, cleaned=cleaned)
-            return None
     
     def _is_name_match(self, original: str, found: str, found_url: str = "", threshold: float = 0.5) -> bool:
         """

@@ -42,7 +42,7 @@ from parsers.factory import create_parser, create_async_parser
     '--parsers',
     type=str,
     default=None,
-    help='Список парсеров через запятую для параллельной обработки (например: electronpribor,prist)'
+    help='Список парсеров через запятую для параллельной обработки. Если не указан - используются все enabled async парсеры из config.yaml (например: electronpribor,prist или оставьте пустым для всех)'
 )
 def main(config: str, limit: Optional[int], output: Optional[str], parser: Optional[str], parsers: Optional[str]):
     """
@@ -91,16 +91,34 @@ def main(config: str, limit: Optional[int], output: Optional[str], parser: Optio
         search_config = config_loader.get_search_config()
         
         # Определяем режим работы: параллельный или одиночный
-        use_parallel = parsers is not None
-        
-        if use_parallel:
-            # ПАРАЛЛЕЛЬНЫЙ РЕЖИМ: несколько парсеров
+        # Если --parsers не указан, используем все enabled async парсеры автоматически
+        if parsers is None:
+            # Автоматически используем все enabled async парсеры
+            parser_names = config_loader.get_enabled_async_parsers()
+            if not parser_names:
+                click.echo("ERROR Не найдено ни одного enabled async парсера в конфигурации", err=True)
+                click.echo("      Убедитесь что в config.yaml есть парсеры с enabled: true и async.enabled: true", err=True)
+                sys.exit(1)
+            use_parallel = len(parser_names) > 1  # Если парсер один - используем одиночный режим
+            if use_parallel:
+                click.echo(f"Автоматически выбраны все enabled async парсеры: {', '.join(parser_names)}")
+            else:
+                # Если автоматически выбран только один парсер - используем его в одиночном режиме
+                parser = parser_names[0]  # Используем для одиночного режима
+                parser_names = None  # Очищаем для одиночного режима
+        else:
+            # Пользователь явно указал парсеры
+            use_parallel = True
             parser_names = [p.strip() for p in parsers.split(',')]
             parser_names = [p for p in parser_names if p]  # Убираем пустые
             
             if len(parser_names) == 0:
                 click.echo("ERROR Список парсеров пуст. Укажите парсеры через запятую: --parsers electronpribor,prist", err=True)
+                click.echo("      Или оставьте --parsers пустым для использования всех enabled async парсеров", err=True)
                 sys.exit(1)
+        
+        if use_parallel:
+            # ПАРАЛЛЕЛЬНЫЙ РЕЖИМ: несколько парсеров
             
             if len(parser_names) == 1:
                 click.echo("WARNING Указан только один парсер. Используйте --parser для одиночного режима", err=True)

@@ -1,18 +1,18 @@
-"""Асинхронный парсер для сайта electronpribor.ru"""
+"""Асинхронный парсер для сайта flukeshop.ru"""
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
-import re
 import structlog
-import httpx
+import urllib.parse
 
 from .base_async_parser import AsyncBaseParser
 
 
-class ElectronpriborAsyncParser(AsyncBaseParser):
+class FlukeShopAsyncParser(AsyncBaseParser):
     """
-    Асинхронный парсер для сайта www.electronpribor.ru
+    Асинхронный парсер для сайта flukeshop.ru
     
     Использует httpx.AsyncClient для параллельных запросов.
+    Особенность: поиск не работает с запятыми, нужна нормализация запроса.
     """
     
     def __init__(self, config: Dict[str, Any], logger: structlog.BoundLogger, search_config: Optional[Dict[str, Any]] = None):
@@ -31,17 +31,35 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         self.min_similarity = self.search_config.get('min_similarity', 0.5)
         self.max_results = self.search_config.get('max_results', 5)
         
-        # Возможные варианты URL поиска
-        # Правильный формат: /search/?type_search=catalog&q=...
-        self.search_patterns = [
-            f"{self.base_url}/search/?type_search=catalog&q={{query}}",
-            f"{self.base_url}/search/?q={{query}}",
-            f"{self.base_url}/?s={{query}}",
-        ]
+        # URL поиска для flukeshop.ru
+        # Формат: /search?search={query}
+        self.search_url_template = f"{self.base_url}search?search={{query}}"
+    
+    def _normalize_search_query(self, product_name: str) -> str:
+        """
+        Нормализует название товара для поискового запроса.
+        
+        Убирает запятые и слова после запятой (например, "тепловизор", "мультиметр").
+        Оставляет только основное название модели.
+        
+        Пример: "Fluke TiX501, тепловизор" → "Fluke TiX501"
+        
+        Args:
+            product_name: Исходное название
+            
+        Returns:
+            Нормализованное название без запятых и дополнительных слов
+        """
+        # Убираем запятые и все что после них
+        if ',' in product_name:
+            product_name = product_name.split(',')[0].strip()
+        
+        # Убираем лишние пробелы
+        return ' '.join(product_name.split())
     
     async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:
         """
-        Ищет товар по названию на сайте electronpribor.ru (асинхронно).
+        Ищет товар по названию на сайте flukeshop.ru (асинхронно).
         
         Args:
             product_name: Название товара
@@ -51,31 +69,28 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         """
         self.log.info("search_started", product=product_name)
         
-        # Нормализуем название для поиска
+        # Нормализуем название для поиска (убираем запятые)
         search_query = self._normalize_search_query(product_name)
+        search_url = self.search_url_template.format(query=urllib.parse.quote(search_query))
         
-        # Пробуем разные паттерны URL поиска
-        for pattern in self.search_patterns:
-            search_url = pattern.format(query=search_query)
-            
-            self.log.debug("trying_search_url", url=search_url, query=search_query)
-            
-            result = await self._search_with_url(search_url, product_name)
-            if result:
-                # Проверяем цену
-                price = result.get('price')
-                if price is None:
-                    # Товар найден, но без цены (снят с производства)
-                    result['price'] = -1.0  # Специальное значение
-                    self.log.warning("product_discontinued",
-                                   product=product_name,
-                                   found_name=result.get('name'))
-                elif price == -2.0:
-                    # Цена по запросу - уже установлено в _extract_product_info
-                    self.log.info("product_price_on_request",
-                                 product=product_name,
-                                 found_name=result.get('name'))
-                return result
+        self.log.debug("trying_search_url", url=search_url, query=search_query, original=product_name)
+        
+        result = await self._search_with_url(search_url, product_name)
+        if result:
+            # Проверяем цену
+            price = result.get('price')
+            if price is None:
+                # Товар найден, но без цены (снят с производства)
+                result['price'] = -1.0
+                self.log.warning("product_discontinued",
+                               product=product_name,
+                               found_name=result.get('name'))
+            elif price == -2.0:
+                # Цена по запросу
+                self.log.info("product_price_on_request",
+                             product=product_name,
+                             found_name=result.get('name'))
+            return result
         
         self.log.warning("product_not_found", product=product_name)
         # Возвращаем словарь с ценой = 0 вместо None
@@ -84,21 +99,6 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
             'price': 0.0,  # Цена = 0 если товар не найден
             'url': None
         }
-    
-    def _normalize_search_query(self, product_name: str) -> str:
-        """
-        Нормализует название товара для поискового запроса.
-        Заменяет пробелы на + для URL encoding.
-        
-        Args:
-            product_name: Исходное название
-            
-        Returns:
-            Нормализованное название с + вместо пробелов
-        """
-        # Убираем лишние пробелы и заменяем на +
-        query = '+'.join(product_name.split())
-        return query
     
     async def _search_with_url(self, search_url: str, original_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -118,13 +118,13 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         # Парсим HTML с помощью BeautifulSoup (lxml parser - быстрее)
         soup = BeautifulSoup(response.text, 'lxml')
         
-        # Реальная структура electronpribor.ru:
-        # <ul class="pro-list"> -> <li> -> <div> с данными товара
-        products = soup.select('ul.pro-list > li')
+        # Структура flukeshop.ru:
+        # <div id="products" class="product-grid"> -> <div class="products-block"> -> <div class="row products-row"> -> <div class="product-col">
+        products = soup.select('div#products.product-grid > div.products-block > div.row.products-row > div.product-col')
         
         if products:
             self.log.debug("products_found",
-                          selector='ul.pro-list > li',
+                          selector='div#products.product-grid > div.products-block > div.row.products-row > div.product-col',
                           count=len(products))
         
         if not products:
@@ -192,19 +192,16 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         info = {}
         
         # Извлекаем название
-        # В electronpribor.ru: <h4> содержит название
-        name_elem = product_element.select_one('h4')
+        # В flukeshop.ru: <h3 class="name"><a>Тепловизор <br><span class="product_title_model">Fluke TiS60+</span></a></h3>
+        name_elem = product_element.select_one('h3.name a')
         name = None
         if name_elem:
-            # СНАЧАЛА удаляем все <b> теги (unwrap убирает тег но оставляет содержимое)
-            for b_tag in name_elem.find_all('b'):
-                b_tag.unwrap()
-            # ПОТОМ извлекаем текст
-            name = name_elem.get_text(strip=True)
-            # Добавляем пробел после запятой если его нет
-            name = re.sub(r',(\S)', r', \1', name)
-            # Убираем ЛИШНИЕ пробелы
-            name = re.sub(r'\s+', ' ', name)
+            # Берем модель из span.product_title_model если есть, иначе весь текст
+            model_elem = name_elem.select_one('span.product_title_model')
+            if model_elem:
+                name = model_elem.get_text(strip=True)
+            else:
+                name = name_elem.get_text(strip=True)
         
         if not name:
             self.log.debug("name_not_found", html=str(product_element)[:200])
@@ -212,69 +209,54 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         
         info['name'] = name
         
-        # Извлекаем цену  
-        # В electronpribor.ru: <noindex><p>49&nbsp;000 ₽</p></noindex>
-        # ВАЖНО: Берем ПЕРВЫЙ <p>, игнорируем текст после первого ₽
+        # Извлекаем цену
+        # В flukeshop.ru: <div class="price"><span class="price-new">1 058 992 р.</span></div>
+        # Или: <div class="price">По запросу</div>
         price = None
-        full_text = ""
-        noindex_elem = product_element.select_one('noindex')
-        if noindex_elem:
-            # Берём весь текст из noindex
-            full_text = noindex_elem.get_text(separator=' ', strip=True)
-            # Разбиваем по символу ₽ и берём ТОЛЬКО первую часть
-            if '₽' in full_text:
-                first_price_text = full_text.split('₽')[0] + '₽'
-                price = self._extract_price_value_universal(first_price_text)
-            elif 'руб' in full_text.lower():
-                first_price_text = full_text.split('руб')[0] + 'руб'
-                price = self._extract_price_value_universal(first_price_text)
+        price_elem = product_element.select_one('div.price span.price-new')
         
-        # Если цена не найдена, ищем текст статуса во всем элементе товара
-        if not price:
-            # Берем весь текст элемента для поиска статуса
-            element_text = product_element.get_text(separator=' ', strip=True)
-            
-            # Используем универсальную функцию определения статуса
-            status = self._detect_price_status(element_text)
-            if status == -2.0:
-                # Цена по запросу
-                info['price'] = -2.0
-                self.log.debug("price_on_request", 
-                              name=name,
-                              status="Цена по запросу",
-                              raw_text=element_text[:100])
-            elif status == -1.0:
-                # Снят с производства
-                info['price'] = -1.0
-                self.log.debug("price_discontinued", 
-                              name=name,
-                              status="Снят с производства",
-                              raw_text=element_text[:100])
-            else:
-                # Без цены
-                info['price'] = None
-                self.log.debug("price_not_found", 
-                              name=name,
-                              status="Без цены",
-                              raw_text=element_text[:100] if element_text else None)
+        if price_elem:
+            # Есть цена
+            price_text = price_elem.get_text(strip=True)
+            # Формат: "1 058 992 р." - универсальная функция обработает "р." как валюту
+            price = self._extract_price_value_universal(price_text)
         else:
+            # Проверяем статус "по запросу"
+            price_div = product_element.select_one('div.price')
+            if price_div:
+                price_text = price_div.get_text(strip=True)
+                status = self._detect_price_status(price_text)
+                if status == -2.0:
+                    info['price'] = -2.0
+                    self.log.debug("price_on_request", name=name)
+                elif status == -1.0:
+                    info['price'] = -1.0
+                    self.log.debug("price_discontinued", name=name)
+                else:
+                    info['price'] = None
+                    self.log.debug("price_not_found", name=name)
+            else:
+                info['price'] = None
+                self.log.debug("price_not_found", name=name)
+        
+        if price:
             info['price'] = price
-            self.log.debug("price_extracted",
-                          name=name,
-                          price=price)
+            self.log.debug("price_extracted", name=name, price=price)
         
         # Извлекаем ссылку на товар
-        # В electronpribor.ru: <a class="search-stat-link">
-        link_elem = product_element.select_one('a.search-stat-link')
+        # В flukeshop.ru: <a href="..."> в h3.name или div.block-img
+        link_elem = product_element.select_one('h3.name a')
+        if not link_elem:
+            link_elem = product_element.select_one('div.block-img a.img')
+        
         if link_elem and link_elem.get('href'):
             href = link_elem['href']
             # Делаем абсолютный URL если нужно
             if href.startswith('/'):
-                href = self.base_url + href
+                href = self.base_url.rstrip('/') + href
+            elif not href.startswith('http'):
+                href = self.base_url.rstrip('/') + '/' + href
             info['url'] = href
         
-        # Всегда возвращаем товар, даже если цена = None
-        # price = None означает "Снят с производства" или "Поставка прекращена"
         return info
-    
 

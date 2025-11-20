@@ -39,6 +39,120 @@ parser:
       status_forcelist: [429, 500, 502, 503, 504]
     timeout: 20              # Больше таймаут (2 запроса на товар: поиск + страница)
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для chipdip.ru
+  chipdip:
+    enabled: true
+    base_url: "https://www.chipdip.ru/"
+    async:
+      enabled: true
+      max_concurrent: 5
+      connection_pool_size: 10
+      request_delay: 0.9
+      batch_size: 25
+      checkpoint_interval: 50
+      batch_delay: 4
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 19
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для keysight-technologies.ru
+  keysight_technologies:
+    enabled: true
+    base_url: "https://keysight-technologies.ru/"
+    async:
+      enabled: true
+      max_concurrent: 5
+      connection_pool_size: 10
+      request_delay: 0.9
+      batch_size: 25
+      checkpoint_interval: 50
+      batch_delay: 4
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 19
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для mprofit.ru
+  mprofit:
+    enabled: true
+    base_url: "https://mprofit.ru/"
+    async:
+      enabled: true
+      max_concurrent: 5
+      connection_pool_size: 10
+      request_delay: 0.9
+      batch_size: 25
+      checkpoint_interval: 50
+      batch_delay: 4
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 19
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для pribor-x.ru
+  pribor_x:
+    enabled: true
+    base_url: "https://www.pribor-x.ru/"
+    async:
+      enabled: true
+      max_concurrent: 5
+      connection_pool_size: 10
+      request_delay: 0.9
+      batch_size: 25
+      checkpoint_interval: 50
+      batch_delay: 4
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 19
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для zenit-electro.ru (2 запроса на товар: поиск + страница)
+  zenit_electro:
+    enabled: true
+    base_url: "https://www.zenit-electro.ru/"
+    async:
+      enabled: true
+      max_concurrent: 4      # Меньше (2 запроса на товар = больше нагрузка)
+      connection_pool_size: 8
+      request_delay: 1.0
+      batch_size: 20         # Меньше батч (больше запросов на товар)
+      checkpoint_interval: 30
+      batch_delay: 5         # Больше пауза между батчами
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 20              # Больше таймаут (2 запроса на товар: поиск + страница)
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+  
+  # Парсер для flukeshop.ru
+  flukeshop:
+    enabled: true
+    base_url: "https://flukeshop.ru/"
+    async:
+      enabled: true
+      max_concurrent: 5
+      connection_pool_size: 10
+      request_delay: 0.9
+      batch_size: 25
+      checkpoint_interval: 50
+      batch_delay: 4
+    retry:
+      total: 3
+      backoff_factor: 0.3
+      status_forcelist: [429, 500, 502, 503, 504]
+    timeout: 19
+    user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 excel:
   input_file: "jshopping_export_2025-11-06_20-07-59.xlsx"

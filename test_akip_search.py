@@ -1,4 +1,4 @@
-"""Тестовый скрипт для проверки поиска АКИП-3404"""
+"""Тестовый скрипт для проверки поиска Fluke на flukeshop.ru"""
 import asyncio
 import sys
 from pathlib import Path
@@ -21,7 +21,7 @@ async def test_search():
     
     # Загружаем конфигурацию
     config_loader = ConfigLoader('config.yaml')
-    parser_config = config_loader.get_parser_config('electronpribor')
+    parser_config = config_loader.get_parser_config('flukeshop')
     search_config = config_loader.get_search_config()
     
     # Настраиваем логирование
@@ -30,10 +30,11 @@ async def test_search():
     log = log.bind(component="test")
     
     # Создаем парсер
-    parser_instance = create_async_parser('electronpribor', parser_config, log, search_config)
+    parser_instance = create_async_parser('flukeshop', parser_config, log, search_config)
     
-    # Тестовый товар - проверяем проблемный случай с АКИП 9806/3 (пробел между АКИП и 9806/3)
-    test_product = "АКИП 9806/3 Антенна биконическая"
+    # Тестовый товар - Fluke TiS60+ (должен найтись с ценой ~1 058 992 р.)
+    # Важно: без запятых и дополнительных слов (flukeshop не работает с запятыми)
+    test_product = "Fluke TiS60+"
     
     print(f"\n{'='*80}")
     print(f"Тестируем поиск товара:")

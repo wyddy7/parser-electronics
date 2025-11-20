@@ -93,6 +93,18 @@ class ConfigLoader:
         return [name for name, cfg in parsers.items() 
                 if cfg.get('enabled', True)]
     
+    def get_enabled_async_parsers(self) -> list[str]:
+        """
+        Возвращает список имен включенных async парсеров.
+        
+        Returns:
+            Список имен парсеров с enabled=true и async.enabled=true
+        """
+        parsers = self.config.get('parser', {})
+        return [name for name, cfg in parsers.items() 
+                if cfg.get('enabled', True) 
+                and cfg.get('async', {}).get('enabled', False)]
+    
     def get_parser_config(self, parser_name: str) -> Dict[str, Any]:
         """
         Получить конфигурацию конкретного парсера.

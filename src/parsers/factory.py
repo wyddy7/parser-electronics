@@ -175,6 +175,42 @@ def _auto_register():
         register_async_parser('prist', PristAsyncParser)
     except ImportError:
         pass
+    
+    try:
+        from .chipdip_async_parser import ChipDipAsyncParser
+        register_async_parser('chipdip', ChipDipAsyncParser)
+    except ImportError:
+        pass
+    
+    try:
+        from .keysight_technologies_async_parser import KeysightTechnologiesAsyncParser
+        register_async_parser('keysight_technologies', KeysightTechnologiesAsyncParser)
+    except ImportError:
+        pass
+    
+    try:
+        from .mprofit_async_parser import MProfitAsyncParser
+        register_async_parser('mprofit', MProfitAsyncParser)
+    except ImportError:
+        pass
+    
+    try:
+        from .pribor_x_async_parser import PriborXAsyncParser
+        register_async_parser('pribor_x', PriborXAsyncParser)
+    except ImportError:
+        pass
+    
+    try:
+        from .zenit_electro_async_parser import ZenitElectroAsyncParser
+        register_async_parser('zenit_electro', ZenitElectroAsyncParser)
+    except ImportError:
+        pass
+    
+    try:
+        from .flukeshop_async_parser import FlukeShopAsyncParser
+        register_async_parser('flukeshop', FlukeShopAsyncParser)
+    except ImportError:
+        pass
 
 
 _auto_register()

@@ -2,6 +2,8 @@
 import asyncio
 import time
 import httpx
+import re
+import urllib.parse
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 import structlog
@@ -259,6 +261,197 @@ class AsyncBaseParser(ABC):
                           error=str(last_exception),
                           attempts=self.retry_total)
         return None
+    
+    def _extract_price_value_universal(self, price_text: str) -> Optional[float]:
+        """
+        Универсальное извлечение цены из текста.
+        
+        Обрабатывает:
+        - Пробелы как разделители тысяч (5 530 руб.)
+        - Неразрывные пробелы (&nbsp;, &#160;, \xa0)
+        - Диапазоны цен (берет первую: 45 144 — 40 629 ₽)
+        - Разные форматы валют (₽, руб., р.)
+        - Форматы с НДС (23500 ₽ (с НДС))
+        
+        Args:
+            price_text: Текст с ценой
+            
+        Returns:
+            Цена как float или None
+        """
+        if not price_text:
+            return None
+        
+        # Заменяем неразрывные пробелы на обычные
+        price_text = price_text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+        price_text = price_text.replace('&#160;', ' ')
+        
+        # Обрабатываем диапазоны цен (берем первую цену)
+        if '—' in price_text or ' - ' in price_text:
+            price_text = re.split(r'[—\-]', price_text)[0]
+        
+        # Извлекаем число (убираем все кроме цифр, точек, запятых)
+        cleaned = re.sub(r'[^\d,.]', '', price_text)
+        
+        # Заменяем запятую на точку
+        cleaned = cleaned.replace(',', '.')
+        
+        # Обрабатываем множественные точки (оставляем только последнюю для десятичных)
+        parts = cleaned.split('.')
+        if len(parts) > 2:
+            cleaned = ''.join(parts[:-1]) + '.' + parts[-1]
+        
+        try:
+            price = float(cleaned)
+            return price if price > 0 else None
+        except ValueError:
+            self.log.debug("price_parse_failed", text=price_text, cleaned=cleaned)
+            return None
+    
+    def _detect_price_status(self, element_text: str) -> Optional[float]:
+        """
+        Определяет статус цены: реальная цена, по запросу (-2.0), снят (-1.0).
+        
+        Args:
+            element_text: Текст элемента для проверки статуса
+            
+        Returns:
+            float: -2.0 если "по запросу", -1.0 если "снят", None если статус не определен
+        """
+        if not element_text:
+            return None
+        
+        text_lower = element_text.lower()
+        
+        # Проверка "по запросу"
+        on_request_phrases = ['по запросу', 'уточняйте', 'запросить', 'уточнить', 'запрос']
+        if any(phrase in text_lower for phrase in on_request_phrases):
+            return -2.0
+        
+        # Проверка "снят"
+        discontinued_phrases = ['снят', 'прекращена поставка', 'не производится']
+        if any(phrase in text_lower for phrase in discontinued_phrases):
+            return -1.0
+        
+        return None  # Статус не определен, пробуем извлечь цену
+    
+    def _normalize_search_query(self, product_name: str) -> str:
+        """
+        Нормализует название товара для поискового запроса.
+        
+        Базовая реализация: убирает лишние пробелы.
+        Переопределяется в подклассах для специфичных случаев.
+        
+        Args:
+            product_name: Исходное название товара
+            
+        Returns:
+            Нормализованное название
+        """
+        # Базовая реализация: убираем лишние пробелы
+        return ' '.join(product_name.split())
+    
+    def _is_name_match(self, original: str, found: str, found_url: str = "", threshold: float = 0.5) -> bool:
+        """
+        Проверяет соответствие найденного названия оригинальному.
+        
+        Сравнивает АРТИКУЛЫ с учетом модификаций (например "TG").
+        Требует ТОЧНОЕ совпадение базового артикула.
+        Если в оригинале есть модификация (второе слово), проверяет её наличие в найденном.
+        
+        Args:
+            original: Оригинальное название из Excel (например "АКИП-4204/1 TG")
+            found: Найденное название с сайта (например "АКИП-4204/1, анализатор спектра")
+            found_url: URL найденного товара (для специфичных случаев, например prist)
+            threshold: Не используется (оставлен для совместимости API)
+            
+        Returns:
+            True если артикулы совпадают ТОЧНО и модификации совпадают (если есть)
+        """
+        # Извлекаем артикулы
+        # Артикул может быть в формате:
+        # - "АКИП-3404" (буквы-цифры)
+        # - "АКИП-3404/1" (буквы-цифры/цифра)
+        # - "В7-78/2" (буква+цифра-цифры/цифра)
+        # - "Е6-32" (буква+цифра-цифры)
+        # Паттерн: (буквы ИЛИ буква+цифра) + дефис + цифры + возможно слэш+цифра
+        article_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+        
+        # Извлекаем артикул из оригинального названия
+        original_text = original if original else ""
+        original_match = article_pattern.match(original_text.replace(' ', ''))
+        if original_match:
+            original_code = original_match.group(1)
+        else:
+            # Если не нашли, пробуем найти артикул с пробелом (АКИП 9806/3)
+            spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+            spaced_match = spaced_pattern.match(original_text)
+            if spaced_match:
+                original_code = spaced_match.group(1).replace(' ', '')
+            else:
+                # Fallback: первое слово
+                original_code = original_text.split()[0] if original_text else ""
+        
+        # Для найденного: берем до запятой, затем извлекаем артикул по паттерну
+        found_parts = found.split(',')
+        found_text = found_parts[0].strip() if found_parts else ""
+        
+        # Извлекаем артикул из найденного текста по паттерну
+        match = article_pattern.match(found_text)
+        if match:
+            found_code = match.group(1)
+        else:
+            # Если паттерн не сработал, пробуем взять до первого пробела или до первой буквы после цифр
+            parts = re.split(r'([А-ЯA-ZЁ]+)', found_text, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) > 1 and parts[0]:
+                found_code = parts[0].rstrip('-/')
+            else:
+                found_code = found_text.split()[0] if found_text else ""
+        
+        # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы и дефисы)
+        # Также заменяем латинскую A на кириллическую А для унификации
+        orig_normalized = original_code.lower().replace(' ', '').replace('-', '').replace('a', 'а').strip()
+        found_normalized = found_code.lower().replace(' ', '').replace('-', '').replace('a', 'а').strip()
+        
+        # ПРОВЕРКА 1: ТОЧНОЕ совпадение базового артикула
+        if orig_normalized != found_normalized:
+            self.log.debug("name_match_check",
+                          original=original,
+                          original_code=original_code,
+                          found=found,
+                          found_code=found_code,
+                          match=False,
+                          reason="base_article_mismatch")
+            return False
+        
+        # ПРОВЕРКА 2: Если в оригинале есть модификация (второе слово), проверяем её наличие
+        original_words = original.split()
+        if len(original_words) > 1:
+            # Есть модификация (например "TG", "без трекинг генератора" и т.д.)
+            modification = original_words[1].lower()
+            found_name_lower = found.lower()
+            
+            # Проверяем наличие модификации в найденном названии
+            if modification not in found_name_lower:
+                # Модификация не найдена - это другой товар
+                self.log.debug("name_match_check",
+                              original=original,
+                              original_code=original_code,
+                              found=found,
+                              found_code=found_code,
+                              match=False,
+                              reason="modification_mismatch",
+                              modification=modification)
+                return False
+        
+        # Все проверки пройдены
+        self.log.debug("name_match_check",
+                      original=original,
+                      original_code=original_code,
+                      found=found,
+                      found_code=found_code,
+                      match=True)
+        return True
     
     @abstractmethod
     async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:

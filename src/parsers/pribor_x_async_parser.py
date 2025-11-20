@@ -1,16 +1,15 @@
-"""Асинхронный парсер для сайта electronpribor.ru"""
+"""Асинхронный парсер для сайта pribor-x.ru"""
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
-import re
 import structlog
-import httpx
+import urllib.parse
 
 from .base_async_parser import AsyncBaseParser
 
 
-class ElectronpriborAsyncParser(AsyncBaseParser):
+class PriborXAsyncParser(AsyncBaseParser):
     """
-    Асинхронный парсер для сайта www.electronpribor.ru
+    Асинхронный парсер для сайта www.pribor-x.ru
     
     Использует httpx.AsyncClient для параллельных запросов.
     """
@@ -31,59 +30,9 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         self.min_similarity = self.search_config.get('min_similarity', 0.5)
         self.max_results = self.search_config.get('max_results', 5)
         
-        # Возможные варианты URL поиска
-        # Правильный формат: /search/?type_search=catalog&q=...
-        self.search_patterns = [
-            f"{self.base_url}/search/?type_search=catalog&q={{query}}",
-            f"{self.base_url}/search/?q={{query}}",
-            f"{self.base_url}/?s={{query}}",
-        ]
-    
-    async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Ищет товар по названию на сайте electronpribor.ru (асинхронно).
-        
-        Args:
-            product_name: Название товара
-            
-        Returns:
-            Словарь с информацией о товаре или None
-        """
-        self.log.info("search_started", product=product_name)
-        
-        # Нормализуем название для поиска
-        search_query = self._normalize_search_query(product_name)
-        
-        # Пробуем разные паттерны URL поиска
-        for pattern in self.search_patterns:
-            search_url = pattern.format(query=search_query)
-            
-            self.log.debug("trying_search_url", url=search_url, query=search_query)
-            
-            result = await self._search_with_url(search_url, product_name)
-            if result:
-                # Проверяем цену
-                price = result.get('price')
-                if price is None:
-                    # Товар найден, но без цены (снят с производства)
-                    result['price'] = -1.0  # Специальное значение
-                    self.log.warning("product_discontinued",
-                                   product=product_name,
-                                   found_name=result.get('name'))
-                elif price == -2.0:
-                    # Цена по запросу - уже установлено в _extract_product_info
-                    self.log.info("product_price_on_request",
-                                 product=product_name,
-                                 found_name=result.get('name'))
-                return result
-        
-        self.log.warning("product_not_found", product=product_name)
-        # Возвращаем словарь с ценой = 0 вместо None
-        return {
-            'name': None,
-            'price': 0.0,  # Цена = 0 если товар не найден
-            'url': None
-        }
+        # URL поиска для pribor-x.ru
+        # Формат: /catalog/?q={query}&how=r
+        self.search_url_template = f"{self.base_url}catalog/?q={{query}}&how=r"
     
     def _normalize_search_query(self, product_name: str) -> str:
         """
@@ -99,6 +48,51 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         # Убираем лишние пробелы и заменяем на +
         query = '+'.join(product_name.split())
         return query
+    
+    async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Ищет товар по названию на сайте pribor-x.ru (асинхронно).
+        
+        Args:
+            product_name: Название товара
+            
+        Returns:
+            Словарь с информацией о товаре или None
+        """
+        self.log.info("search_started", product=product_name)
+        
+        # Нормализуем название для поиска (пробелы → +)
+        search_query = self._normalize_search_query(product_name)
+        # Дополнительно кодируем спецсимволы (например, запятые)
+        search_query_encoded = urllib.parse.quote(search_query, safe='+')
+        search_url = self.search_url_template.format(query=search_query_encoded)
+        
+        self.log.debug("trying_search_url", url=search_url, query=search_query)
+        
+        result = await self._search_with_url(search_url, product_name)
+        if result:
+            # Проверяем цену
+            price = result.get('price')
+            if price is None:
+                # Товар найден, но без цены (снят с производства)
+                result['price'] = -1.0
+                self.log.warning("product_discontinued",
+                               product=product_name,
+                               found_name=result.get('name'))
+            elif price == -2.0:
+                # Цена по запросу
+                self.log.info("product_price_on_request",
+                             product=product_name,
+                             found_name=result.get('name'))
+            return result
+        
+        self.log.warning("product_not_found", product=product_name)
+        # Возвращаем словарь с ценой = 0 вместо None
+        return {
+            'name': None,
+            'price': 0.0,  # Цена = 0 если товар не найден
+            'url': None
+        }
     
     async def _search_with_url(self, search_url: str, original_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -118,13 +112,13 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         # Парсим HTML с помощью BeautifulSoup (lxml parser - быстрее)
         soup = BeautifulSoup(response.text, 'lxml')
         
-        # Реальная структура electronpribor.ru:
-        # <ul class="pro-list"> -> <li> -> <div> с данными товара
-        products = soup.select('ul.pro-list > li')
+        # Структура pribor-x.ru:
+        # <div class="catalog list search js_wrapper_items"> -> <div class="list_item_wrapp item_wrap item">
+        products = soup.select('.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item')
         
         if products:
             self.log.debug("products_found",
-                          selector='ul.pro-list > li',
+                          selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item',
                           count=len(products))
         
         if not products:
@@ -192,19 +186,14 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         info = {}
         
         # Извлекаем название
-        # В electronpribor.ru: <h4> содержит название
-        name_elem = product_element.select_one('h4')
+        # В pribor-x.ru: <div class="item-title"><a><span>Название</span></a></div>
+        name_elem = product_element.select_one('.item-title a span')
+        if not name_elem:
+            name_elem = product_element.select_one('.item-title a')
+        
         name = None
         if name_elem:
-            # СНАЧАЛА удаляем все <b> теги (unwrap убирает тег но оставляет содержимое)
-            for b_tag in name_elem.find_all('b'):
-                b_tag.unwrap()
-            # ПОТОМ извлекаем текст
             name = name_elem.get_text(strip=True)
-            # Добавляем пробел после запятой если его нет
-            name = re.sub(r',(\S)', r', \1', name)
-            # Убираем ЛИШНИЕ пробелы
-            name = re.sub(r'\s+', ' ', name)
         
         if not name:
             self.log.debug("name_not_found", html=str(product_element)[:200])
@@ -212,69 +201,54 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         
         info['name'] = name
         
-        # Извлекаем цену  
-        # В electronpribor.ru: <noindex><p>49&nbsp;000 ₽</p></noindex>
-        # ВАЖНО: Берем ПЕРВЫЙ <p>, игнорируем текст после первого ₽
+        # Извлекаем цену
+        # В pribor-x.ru: <span class="price_value">900</span><span class="price_currency"> руб.</span>
+        # Или: <span class="to-order"><span>Цена по запросу</span></span>
         price = None
-        full_text = ""
-        noindex_elem = product_element.select_one('noindex')
-        if noindex_elem:
-            # Берём весь текст из noindex
-            full_text = noindex_elem.get_text(separator=' ', strip=True)
-            # Разбиваем по символу ₽ и берём ТОЛЬКО первую часть
-            if '₽' in full_text:
-                first_price_text = full_text.split('₽')[0] + '₽'
-                price = self._extract_price_value_universal(first_price_text)
-            elif 'руб' in full_text.lower():
-                first_price_text = full_text.split('руб')[0] + 'руб'
-                price = self._extract_price_value_universal(first_price_text)
+        price_value_elem = product_element.select_one('.price .price_value')
+        if not price_value_elem:
+            price_value_elem = product_element.select_one('.price_matrix_block .price .price_value')
         
-        # Если цена не найдена, ищем текст статуса во всем элементе товара
-        if not price:
-            # Берем весь текст элемента для поиска статуса
-            element_text = product_element.get_text(separator=' ', strip=True)
-            
-            # Используем универсальную функцию определения статуса
-            status = self._detect_price_status(element_text)
-            if status == -2.0:
-                # Цена по запросу
-                info['price'] = -2.0
-                self.log.debug("price_on_request", 
-                              name=name,
-                              status="Цена по запросу",
-                              raw_text=element_text[:100])
-            elif status == -1.0:
-                # Снят с производства
-                info['price'] = -1.0
-                self.log.debug("price_discontinued", 
-                              name=name,
-                              status="Снят с производства",
-                              raw_text=element_text[:100])
-            else:
-                # Без цены
-                info['price'] = None
-                self.log.debug("price_not_found", 
-                              name=name,
-                              status="Без цены",
-                              raw_text=element_text[:100] if element_text else None)
+        if price_value_elem:
+            # Есть цена
+            price_text = price_value_elem.get_text(strip=True)
+            # Добавляем "руб." для универсальной функции
+            price_currency_elem = product_element.select_one('.price_currency')
+            currency = price_currency_elem.get_text(strip=True) if price_currency_elem else " руб."
+            price_text_with_currency = f"{price_text}{currency}"
+            price = self._extract_price_value_universal(price_text_with_currency)
         else:
+            # Проверяем статус "по запросу"
+            to_order_elem = product_element.select_one('.to-order span')
+            if to_order_elem:
+                to_order_text = to_order_elem.get_text(strip=True)
+                status = self._detect_price_status(to_order_text)
+                if status == -2.0:
+                    info['price'] = -2.0
+                    self.log.debug("price_on_request", name=name)
+                elif status == -1.0:
+                    info['price'] = -1.0
+                    self.log.debug("price_discontinued", name=name)
+                else:
+                    info['price'] = None
+                    self.log.debug("price_not_found", name=name)
+            else:
+                info['price'] = None
+                self.log.debug("price_not_found", name=name)
+        
+        if price:
             info['price'] = price
-            self.log.debug("price_extracted",
-                          name=name,
-                          price=price)
+            self.log.debug("price_extracted", name=name, price=price)
         
         # Извлекаем ссылку на товар
-        # В electronpribor.ru: <a class="search-stat-link">
-        link_elem = product_element.select_one('a.search-stat-link')
+        # В pribor-x.ru: <a href="..."> в .item-title
+        link_elem = product_element.select_one('.item-title a')
         if link_elem and link_elem.get('href'):
             href = link_elem['href']
             # Делаем абсолютный URL если нужно
             if href.startswith('/'):
-                href = self.base_url + href
+                href = self.base_url.rstrip('/') + href
             info['url'] = href
         
-        # Всегда возвращаем товар, даже если цена = None
-        # price = None означает "Снят с производства" или "Поставка прекращена"
         return info
-    
 
