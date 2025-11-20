@@ -11,7 +11,7 @@
 1. **flukeshop** - `https://flukeshop.ru/` - 📝 Шаблон готов
 2. **prist** - `https://prist.ru` - ✅ Реализован
 3. **electronpribor** - `https://www.electronpribor.ru` - ✅ Реализован
-4. **zenit_electro** - `https://www.zenit-electro.ru/` - ⏳ В разработке
+4. **zenit_electro** - `https://www.zenit-electro.ru/` - 📝 Шаблон готов
 5. **pribor_x** - `https://www.pribor-x.ru/` - ⏳ В разработке
 6. **chipdip** - `https://www.chipdip.ru/` - ⏳ В разработке
 7. **keysight_technologies** - `https://keysight-technologies.ru/` - ⏳ В разработке
