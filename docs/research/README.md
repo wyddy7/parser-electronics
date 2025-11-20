@@ -12,10 +12,10 @@
 2. **prist** - `https://prist.ru` - ✅ Реализован
 3. **electronpribor** - `https://www.electronpribor.ru` - ✅ Реализован
 4. **zenit_electro** - `https://www.zenit-electro.ru/` - 📝 Шаблон готов
-5. **pribor_x** - `https://www.pribor-x.ru/` - ⏳ В разработке
-6. **chipdip** - `https://www.chipdip.ru/` - ⏳ В разработке
-7. **keysight_technologies** - `https://keysight-technologies.ru/` - ⏳ В разработке
-8. **mprofit** - `https://mprofit.ru/` - ⏳ В разработке
+5. **pribor_x** - `https://www.pribor-x.ru/` - 📝 Шаблон готов
+6. **chipdip** - `https://www.chipdip.ru/` - 📝 Шаблон готов
+7. **keysight_technologies** - `https://keysight-technologies.ru/` - 📝 Шаблон готов
+8. **mprofit** - `https://mprofit.ru/` - 📝 Шаблон готов
 
 ## Как использовать
 
