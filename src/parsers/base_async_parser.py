@@ -339,7 +339,10 @@ class AsyncBaseParser(ABC):
         """
         Нормализует название товара для поискового запроса.
         
-        Базовая реализация: убирает лишние пробелы.
+        Базовая реализация:
+        1. Обрезает после запятой (если есть)
+        2. Убирает лишние пробелы
+        
         Переопределяется в подклассах для специфичных случаев.
         
         Args:
@@ -348,7 +351,11 @@ class AsyncBaseParser(ABC):
         Returns:
             Нормализованное название
         """
-        # Базовая реализация: убираем лишние пробелы
+        # Обрезаем после запятой
+        if ',' in product_name:
+            product_name = product_name.split(',')[0].strip()
+        
+        # Убираем лишние пробелы
         return ' '.join(product_name.split())
     
     def _is_name_match(self, original: str, found: str, found_url: str = "", threshold: float = 0.5) -> bool:
@@ -374,39 +381,63 @@ class AsyncBaseParser(ABC):
         # - "АКИП-3404/1" (буквы-цифры/цифра)
         # - "В7-78/2" (буква+цифра-цифры/цифра)
         # - "Е6-32" (буква+цифра-цифры)
+        # - "АКИП 9806/3" (буквы пробел цифры/цифра)
+        # - "Fluke T90" (бренд пробел модель)
         # Паттерн: (буквы ИЛИ буква+цифра) + дефис + цифры + возможно слэш+цифра
         article_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
         
         # Извлекаем артикул из оригинального названия
         original_text = original if original else ""
-        original_match = article_pattern.match(original_text.replace(' ', ''))
-        if original_match:
-            original_code = original_match.group(1)
-        else:
-            # Если не нашли, пробуем найти артикул с пробелом (АКИП 9806/3)
-            spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
-            spaced_match = spaced_pattern.match(original_text)
-            if spaced_match:
-                original_code = spaced_match.group(1).replace(' ', '')
+        
+        # Специальная обработка для Fluke: "Fluke T90" → "FlukeT90"
+        if original_text.startswith('Fluke'):
+            fluke_match = re.match(r'(Fluke\s+[A-Za-z0-9+/\-]+)', original_text, re.IGNORECASE)
+            if fluke_match:
+                original_code = fluke_match.group(1).replace(' ', '')  # "Fluke T90" → "FlukeT90"
             else:
                 # Fallback: первое слово
                 original_code = original_text.split()[0] if original_text else ""
+        else:
+            # Обычная обработка для других артикулов
+            original_match = article_pattern.match(original_text.replace(' ', ''))
+            if original_match:
+                original_code = original_match.group(1)
+            else:
+                # Если не нашли, пробуем найти артикул с пробелом (АКИП 9806/3)
+                # Улучшенный паттерн: поддерживает пробел перед дефисом/слэшем
+                spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[A-Za-z0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+                spaced_match = spaced_pattern.match(original_text)
+                if spaced_match:
+                    original_code = spaced_match.group(1).replace(' ', '')
+                else:
+                    # Fallback: первое слово
+                    original_code = original_text.split()[0] if original_text else ""
         
         # Для найденного: берем до запятой, затем извлекаем артикул по паттерну
         found_parts = found.split(',')
         found_text = found_parts[0].strip() if found_parts else ""
         
-        # Извлекаем артикул из найденного текста по паттерну
-        match = article_pattern.match(found_text)
-        if match:
-            found_code = match.group(1)
-        else:
-            # Если паттерн не сработал, пробуем взять до первого пробела или до первой буквы после цифр
-            parts = re.split(r'([А-ЯA-ZЁ]+)', found_text, maxsplit=1, flags=re.IGNORECASE)
-            if len(parts) > 1 and parts[0]:
-                found_code = parts[0].rstrip('-/')
+        # Специальная обработка для Fluke в найденном тексте
+        if found_text.startswith('Fluke'):
+            fluke_match = re.match(r'(Fluke\s+[A-Za-z0-9+/\-]+)', found_text, re.IGNORECASE)
+            if fluke_match:
+                found_code = fluke_match.group(1).replace(' ', '')  # "Fluke T90" → "FlukeT90"
             else:
                 found_code = found_text.split()[0] if found_text else ""
+        else:
+            # Извлекаем артикул из найденного текста по паттерну
+            match = article_pattern.match(found_text)
+            if match:
+                found_code = match.group(1)
+            else:
+                # Если паттерн не сработал, пробуем найти артикул с пробелом
+                spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[A-Za-z0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+                spaced_match = spaced_pattern.match(found_text)
+                if spaced_match:
+                    found_code = spaced_match.group(1).replace(' ', '')
+                else:
+                    # Fallback: первое слово
+                    found_code = found_text.split()[0] if found_text else ""
         
         # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы и дефисы)
         # Также заменяем латинскую A на кириллическую А для унификации
@@ -428,10 +459,25 @@ class AsyncBaseParser(ABC):
         original_words = original.split()
         if len(original_words) > 1:
             # Есть модификация (например "TG", "без трекинг генератора" и т.д.)
-            modification = original_words[1].lower()
-            found_name_lower = found.lower()
+            modification = original_words[1].lower().rstrip(',')  # Убираем запятую
             
-            # Проверяем наличие модификации в найденном названии
+            # Если модификация короткая (1-3 символа) и является частью артикула - пропускаем проверку
+            if len(modification) <= 3 and modification.isalnum():
+                found_code_normalized = found_code.lower().replace(' ', '').replace('-', '')
+                if modification in found_code_normalized:
+                    # Это часть артикула, не модификация - пропускаем проверку
+                    self.log.debug("name_match_check",
+                                  original=original,
+                                  original_code=original_code,
+                                  found=found,
+                                  found_code=found_code,
+                                  match=True,
+                                  reason="modification_is_part_of_article",
+                                  modification=modification)
+                    return True
+            
+            # Проверяем наличие модификации в найденном названии (без запятой)
+            found_name_lower = found.lower().replace(',', '')
             if modification not in found_name_lower:
                 # Модификация не найдена - это другой товар
                 self.log.debug("name_match_check",

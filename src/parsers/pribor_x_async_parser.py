@@ -45,8 +45,10 @@ class PriborXAsyncParser(AsyncBaseParser):
         Returns:
             Нормализованное название с + вместо пробелов
         """
-        # Убираем лишние пробелы и заменяем на +
-        query = '+'.join(product_name.split())
+        # Сначала применяем базовую нормализацию (обрезка после запятой)
+        normalized = super()._normalize_search_query(product_name)
+        # Затем заменяем пробелы на +
+        query = '+'.join(normalized.split())
         return query
     
     async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:

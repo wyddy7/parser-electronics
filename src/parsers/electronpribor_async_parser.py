@@ -96,8 +96,10 @@ class ElectronpriborAsyncParser(AsyncBaseParser):
         Returns:
             Нормализованное название с + вместо пробелов
         """
-        # Убираем лишние пробелы и заменяем на +
-        query = '+'.join(product_name.split())
+        # Сначала применяем базовую нормализацию (обрезка после запятой)
+        normalized = super()._normalize_search_query(product_name)
+        # Затем заменяем пробелы на +
+        query = '+'.join(normalized.split())
         return query
     
     async def _search_with_url(self, search_url: str, original_name: str) -> Optional[Dict[str, Any]]:

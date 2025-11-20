@@ -3,6 +3,7 @@ from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
 import structlog
 import urllib.parse
+import re
 
 from .base_async_parser import AsyncBaseParser
 
@@ -39,23 +40,44 @@ class FlukeShopAsyncParser(AsyncBaseParser):
         """
         Нормализует название товара для поискового запроса.
         
-        Убирает запятые и слова после запятой (например, "тепловизор", "мультиметр").
-        Оставляет только основное название модели.
+        Обрезает все после артикула модели Fluke (например, "тестер напряжения/целостности").
+        Оставляет только основное название модели: "Fluke" + модель.
         
-        Пример: "Fluke TiX501, тепловизор" → "Fluke TiX501"
+        Примеры:
+        - "Fluke T90, тестер напряжения/целостности" → "Fluke T90"
+        - "Fluke TiX501, тепловизор" → "Fluke TiX501"
+        - "Fluke 87V мультиметр" → "Fluke 87V"
         
         Args:
             product_name: Исходное название
             
         Returns:
-            Нормализованное название без запятых и дополнительных слов
+            Нормализованное название только с артикулом модели
         """
-        # Убираем запятые и все что после них
+        # Паттерн для артикула Fluke: "Fluke" + пробел + модель (буквы, цифры, +, /, -)
+        # Модель может быть: T90, TiS60+, 87V, TiX501 и т.д.
+        fluke_pattern = re.compile(r'(Fluke\s+[A-Za-z0-9+/\-]+)', re.IGNORECASE)
+        
+        # Ищем артикул Fluke в названии
+        match = fluke_pattern.search(product_name)
+        if match:
+            # Нашли артикул - берем только его
+            normalized = match.group(1)
+            self.log.debug("query_normalized_fluke",
+                          original=product_name,
+                          normalized=normalized)
+            return normalized.strip()
+        
+        # Если не нашли паттерн Fluke, обрезаем по запятой (старая логика)
         if ',' in product_name:
             product_name = product_name.split(',')[0].strip()
         
         # Убираем лишние пробелы
-        return ' '.join(product_name.split())
+        normalized = ' '.join(product_name.split())
+        self.log.debug("query_normalized_fallback",
+                      original=product_name,
+                      normalized=normalized)
+        return normalized
     
     async def search_product(self, product_name: str) -> Optional[Dict[str, Any]]:
         """
