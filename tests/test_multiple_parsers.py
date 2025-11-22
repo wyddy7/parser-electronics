@@ -10,8 +10,8 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-# Добавляем путь к src
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+# Добавляем путь к src (из tests/ в корень проекта)
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from config_loader import ConfigLoader
 from logger import configure_logging
@@ -69,8 +69,9 @@ async def test_parser(parser_name: str, product_name: str, config_loader: Config
 async def test_all_parsers():
     """Тестирует все парсеры на всех товарах"""
     
-    # Загружаем конфигурацию
-    config_loader = ConfigLoader('config.yaml')
+    # Загружаем конфигурацию (из корня проекта)
+    config_path = Path(__file__).parent.parent / 'config.yaml'
+    config_loader = ConfigLoader(str(config_path))
     search_config = config_loader.get_search_config()
     
     # Настраиваем логирование (уменьшаем уровень для читаемости)

@@ -10,8 +10,8 @@ if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-# Добавляем путь к src
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+# Добавляем путь к src (из tests/ в корень проекта)
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from config_loader import ConfigLoader
 from logger import configure_logging
@@ -173,8 +173,9 @@ async def test_query(parser_instance, query: str, log) -> dict:
 async def test_all_queries():
     """Тестирует все запросы"""
     
-    # Загружаем конфигурацию
-    config_loader = ConfigLoader('config.yaml')
+    # Загружаем конфигурацию (из корня проекта)
+    config_path = Path(__file__).parent.parent / 'config.yaml'
+    config_loader = ConfigLoader(str(config_path))
     parser_config = config_loader.get_parser_config('mprofit')
     search_config = config_loader.get_search_config()
     
