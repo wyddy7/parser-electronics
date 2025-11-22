@@ -164,12 +164,28 @@ class AsyncBaseParser(ABC):
                 if response.status_code in self.retry_status_forcelist:
                     # Нужен retry
                     if attempt < self.retry_total - 1:
-                        wait_time = self.retry_backoff_factor * (2 ** attempt)
-                        self.log.warning("retry_scheduled",
-                                        url=url,
-                                        status_code=response.status_code,
-                                        attempt=attempt + 1,
-                                        wait_time=wait_time)
+                        # Специальная обработка для 429 (Too Many Requests)
+                        if response.status_code == 429:
+                            # Агрессивный backoff для 429: 5s, 10s, 20s... + джиттер
+                            # Это поможет обойти защиту типа ddos-guard
+                            base_delay = 5.0
+                            import random
+                            jitter = random.uniform(0.5, 2.0)
+                            wait_time = (base_delay * (2 ** attempt)) + jitter
+                            
+                            self.log.warning("rate_limit_hit_429",
+                                            url=url,
+                                            wait_time=wait_time,
+                                            attempt=attempt + 1,
+                                            msg="Applying aggressive exponential backoff")
+                        else:
+                            wait_time = self.retry_backoff_factor * (2 ** attempt)
+                            self.log.warning("retry_scheduled",
+                                            url=url,
+                                            status_code=response.status_code,
+                                            attempt=attempt + 1,
+                                            wait_time=wait_time)
+                        
                         await asyncio.sleep(wait_time)
                         continue
                     else:
@@ -194,12 +210,26 @@ class AsyncBaseParser(ABC):
                 last_exception = e
                 if e.response.status_code in self.retry_status_forcelist:
                     if attempt < self.retry_total - 1:
-                        wait_time = self.retry_backoff_factor * (2 ** attempt)
-                        self.log.warning("http_error_retry",
-                                        url=url,
-                                        status_code=e.response.status_code,
-                                        attempt=attempt + 1,
-                                        wait_time=wait_time)
+                        # Специальная обработка для 429 (Too Many Requests)
+                        if e.response.status_code == 429:
+                            base_delay = 5.0
+                            import random
+                            jitter = random.uniform(0.5, 2.0)
+                            wait_time = (base_delay * (2 ** attempt)) + jitter
+                            
+                            self.log.warning("http_error_429_retry",
+                                            url=url,
+                                            wait_time=wait_time,
+                                            attempt=attempt + 1,
+                                            msg="Applying aggressive exponential backoff")
+                        else:
+                            wait_time = self.retry_backoff_factor * (2 ** attempt)
+                            self.log.warning("http_error_retry",
+                                            url=url,
+                                            status_code=e.response.status_code,
+                                            attempt=attempt + 1,
+                                            wait_time=wait_time)
+                        
                         await asyncio.sleep(wait_time)
                         continue
                 

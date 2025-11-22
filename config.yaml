@@ -46,17 +46,17 @@ parser:
     base_url: "https://www.chipdip.ru/"
     async:
       enabled: true
-      max_concurrent: 5
-      connection_pool_size: 10
-      request_delay: 0.9
-      batch_size: 25
-      checkpoint_interval: 50
-      batch_delay: 4
+      max_concurrent: 2      # СИЛЬНО УМЕНЬШЕНО: было 5, стало 2 (чтобы не банили)
+      connection_pool_size: 5 # Уменьшено
+      request_delay: 2.5     # УВЕЛИЧЕНО: было 0.9, стало 2.5 (защита от ddos-guard)
+      batch_size: 10         # Меньше батч
+      checkpoint_interval: 20
+      batch_delay: 10        # Большая пауза между батчами
     retry:
-      total: 3
-      backoff_factor: 0.3
+      total: 4               # Больше попыток
+      backoff_factor: 2.0    # УВЕЛИЧЕНО: было 0.3, стало 2.0 (экспоненциальная задержка)
       status_forcelist: [429, 500, 502, 503, 504]
-    timeout: 19
+    timeout: 25              # Больше таймаут
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
   
   # Парсер для keysight-technologies.ru
@@ -168,4 +168,3 @@ logging:
   console: true            # Вывод в консоль
   file: "logs/parser.log"  # Файл для логов
   format: "json"           # json для production, console для dev
-
