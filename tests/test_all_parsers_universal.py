@@ -40,6 +40,8 @@ UNIVERSAL_TEST_QUERIES = [
     ("АКИП-2502", "Измеритель мощности АКИП"),
     ("мультиметр", "Общий запрос - мультиметр"),
     ("осциллограф", "Общий запрос - осциллограф"),
+    # Специфичные товары для проверки конкретных магазинов
+    ("DSOX1204A", "Осциллограф Keysight (для проверки keysight_technologies)"),
 ]
 
 async def test_parser_query(parser_name: str, query: str, config_loader: ConfigLoader, log) -> Dict[str, Any]:
@@ -216,4 +218,3 @@ async def test_all_parsers_universal():
 
 if __name__ == '__main__':
     asyncio.run(test_all_parsers_universal())
-

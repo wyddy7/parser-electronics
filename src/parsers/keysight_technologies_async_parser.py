@@ -94,14 +94,28 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
         
         # Структура keysight-technologies.ru:
         # <div class="products-block row"> -> <div class="product-layout product-grid">
-        products = soup.select('.products-block.row > .product-layout.product-grid')
+        # Используем fallback селекторы
+        selectors = [
+            '.products-block.row > .product-layout.product-grid',
+            '.product-layout',
+            '.product-thumb',
+            '.products-block .product-layout'
+        ]
+        
+        products = []
+        used_selector = ""
+        for selector in selectors:
+            found = soup.select(selector)
+            if found:
+                products = found
+                used_selector = selector
+                break
         
         if products:
             self.log.debug("products_found",
-                          selector='.products-block.row > .product-layout.product-grid',
+                          selector=used_selector,
                           count=len(products))
-        
-        if not products:
+        else:
             self.log.debug("no_products_in_results", url=search_url)
             return None
         
@@ -144,6 +158,15 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
         # Извлекаем название
         # В keysight-technologies.ru: <a class="product-thumb__name">Название</a>
         name_elem = product_element.select_one('.product-thumb__name')
+        
+        # Fallback для названия
+        if not name_elem:
+            name_selectors = ['.name', '.caption h4 a', '.caption a', 'div.caption h4']
+            for sel in name_selectors:
+                name_elem = product_element.select_one(sel)
+                if name_elem:
+                    break
+                    
         name = None
         if name_elem:
             name = name_elem.get_text(strip=True)
@@ -154,9 +177,8 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
         
         info['name'] = name
         
-        # Извлекаем цену из опций товара
-        # ВАЖНО: Основная цена .product-thumb__price.price показывает базовую цену (обычно 81 ₽)
-        # Реальные цены находятся в опциях товара в атрибуте data-price
+        # Извлекаем цену
+        # 1. Сначала пробуем опции (там реальные цены на аксессуары/модификации)
         price = None
         
         # Ищем все опции с data-price
@@ -179,7 +201,7 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
                     except (ValueError, TypeError):
                         continue
         
-        # Если не нашли в опциях, пробуем извлечь из title опции
+        # 2. Если не нашли в опциях, пробуем извлечь из title опции
         if not price:
             option_names = product_element.select('.option__name[title]')
             for option_name in option_names:
@@ -193,12 +215,47 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
                                       price=price,
                                       title=title)
                         break
+                        
+        # 3. Fallback: обычная цена
+        if not price:
+            price_selectors = ['.price', '.price-new', 'span.price']
+            for sel in price_selectors:
+                price_elem = product_element.select_one(sel)
+                if price_elem:
+                    price_text = price_elem.get_text(strip=True)
+                    # Извлекаем data-price если есть (он точнее)
+                    if price_elem.has_attr('data-price'):
+                        try:
+                            price = float(price_elem['data-price'])
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    # Иначе парсим текст
+                    price = self._extract_price_value_universal(price_text)
+                    if price and price > 0:
+                        break
         
         if price:
             info['price'] = price
         else:
-            info['price'] = None
-            self.log.debug("price_not_found", name=name)
+            # Проверяем статус цены (по запросу, снят и т.д.)
+            price_elem = product_element.select_one('.price')
+            if price_elem:
+                price_text = price_elem.get_text(strip=True)
+                status = self._detect_price_status(price_text)
+                if status:
+                    info['price'] = status
+                    if status == -2.0:
+                        self.log.debug("price_on_request", name=name)
+                    elif status == -1.0:
+                        self.log.debug("price_discontinued", name=name)
+                else:
+                    info['price'] = None
+                    self.log.debug("price_not_found", name=name)
+            else:
+                info['price'] = None
+                self.log.debug("price_not_found", name=name)
         
         # Извлекаем ссылку на товар
         # В keysight-technologies.ru: <a class="product-thumb__name" href="...">
@@ -210,4 +267,3 @@ class KeysightTechnologiesAsyncParser(AsyncBaseParser):
             info['url'] = href
         
         return info
-
