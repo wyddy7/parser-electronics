@@ -116,13 +116,20 @@ class PriborXAsyncParser(AsyncBaseParser):
         
         # Структура pribor-x.ru:
         # <div class="catalog list search js_wrapper_items"> -> <div class="list_item_wrapp item_wrap item">
+        # Пробуем разные селекторы (как в mprofit)
         products = soup.select('.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item')
-        
-        if products:
-            self.log.debug("products_found",
-                          selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item',
-                          count=len(products))
-        
+        if not products:
+            # Альтернативный селектор
+            products = soup.select('.list_item_wrapp.item_wrap.item')
+        if not products:
+            # Еще один вариант
+            products = soup.select('.catalog.list.search .list_item_wrapp')
+
+        self.log.info("products_selected", 
+             count=len(products),
+             selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item (with fallbacks)',
+             url=search_url[:100])
+
         if not products:
             self.log.debug("no_products_in_results", url=search_url)
             return None

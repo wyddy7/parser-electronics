@@ -97,62 +97,113 @@ class MProfitAsyncParser(AsyncBaseParser):
         
         # Структура mprofit.ru:
         # <div class="catalog list search js_wrapper_items"> -> <div class="list_item_wrapp item_wrap item">
+        # Пробуем разные селекторы (как в тесте)
         products = soup.select('.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item')
+        if not products:
+            # Альтернативный селектор
+            products = soup.select('.list_item_wrapp.item_wrap.item')
+        if not products:
+            # Еще один вариант
+            products = soup.select('.catalog.list.search .list_item_wrapp')
+        
+        self.log.info("products_selected", 
+                     count=len(products),
+                     selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item (with fallbacks)',
+                     url=search_url[:100])
         
         if products:
             self.log.debug("products_found",
-                          selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item',
+                          selector='.catalog.list.search.js_wrapper_items > .list_item_wrapp.item_wrap.item (with fallbacks)',
                           count=len(products))
         
         if not products:
             self.log.debug("no_products_in_results", url=search_url)
             return None
-        
+
         # Ищем наиболее подходящий товар
         # Приоритет: товары с ценой > товары "по запросу" > товары "снято с производства"
         found_with_price = None  # Товар с ценой (приоритет 1)
         found_on_request = None  # Товар "по запросу" (приоритет 2)
         found_without_price = None  # Товар без цены/снят (приоритет 3)
         
+        self.log.info("processing_products",
+                     total_products=len(products),
+                     max_results=self.max_results,
+                     original_name=original_name)
+        
         for idx, product in enumerate(products[:self.max_results]):
             product_info = self._extract_product_info(product, original_name)
             
-            if product_info and self._is_name_match(original_name, product_info['name']):
-                price = product_info.get('price')
+            if not product_info:
+                self.log.warning("product_info_is_none", 
+                                idx=idx,
+                                original=original_name,
+                                html_preview=str(product)[:300])
+                continue
+            
+            if product_info:
+                product_name = product_info.get('name')
+                if not product_name:
+                    self.log.error("product_info_has_no_name",
+                                  idx=idx,
+                                  original=original_name,
+                                  product_info_keys=list(product_info.keys()))
+                    continue
                 
-                if price is not None and price > 0:
-                    # Товар с ценой - возвращаем сразу (приоритет 1)
-                    self.log.info("product_matched_with_price",
-                                 original=original_name,
-                                 found=product_info['name'],
-                                 price=price)
-                    return product_info
-                elif price == -2.0 and found_on_request is None:
-                    # Сохраняем первый товар "по запросу" (приоритет 2)
-                    found_on_request = product_info
-                    self.log.debug("product_matched_on_request",
-                                  original=original_name,
-                                  found=product_info['name'])
-                elif price is None and found_without_price is None:
-                    # Сохраняем первый товар без цены (приоритет 3)
-                    found_without_price = product_info
-                    self.log.debug("product_matched_without_price",
-                                  original=original_name,
-                                  found=product_info['name'])
+                is_match = self._is_name_match(original_name, product_name)
+                self.log.info("checking_product_match",
+                             idx=idx,
+                             original=original_name,
+                             found=product_name,
+                             is_match=is_match,
+                             price=product_info.get('price'),
+                             price_type=type(product_info.get('price')).__name__)
+                
+                if is_match:
+                    price = product_info.get('price')
+                    
+                    if price is not None and price > 0:
+                        # Товар с ценой - возвращаем сразу (приоритет 1)
+                        self.log.info("product_matched_with_price",
+                                     original=original_name,
+                                     found=product_info['name'],
+                                     price=price)
+                        return product_info
+                    elif price == -2.0 and found_on_request is None:
+                        # Сохраняем первый товар "по запросу" (приоритет 2)
+                        found_on_request = product_info
+                        self.log.debug("product_matched_on_request",
+                                      original=original_name,
+                                      found=product_info['name'])
+                    elif price is None or price == -1.0:
+                        # Сохраняем первый товар без цены или снятый (приоритет 3)
+                        if found_without_price is None:
+                            found_without_price = product_info
+                            self.log.info("product_matched_without_price",
+                                          original=original_name,
+                                          found=product_info['name'],
+                                          price=price,
+                                          price_type=type(price).__name__)
         
         # Возвращаем по приоритету
         if found_on_request:
             self.log.info("product_found_price_on_request",
                          original=original_name,
-                         found=found_on_request['name'])
+                         found=found_on_request['name'],
+                         price=found_on_request.get('price'))
             return found_on_request
         elif found_without_price:
             self.log.info("product_found_but_discontinued",
                          original=original_name,
-                         found=found_without_price['name'])
+                         found=found_without_price['name'],
+                         price=found_without_price.get('price'))
             return found_without_price
         
-        self.log.debug("no_matching_products", original_name=original_name)
+        self.log.warning("no_matching_products", 
+                        original_name=original_name,
+                        found_with_price=found_with_price is not None,
+                        found_on_request=found_on_request is not None,
+                        found_without_price=found_without_price is not None)
         return None
     
     def _extract_product_info(self, product_element, original_name: str) -> Optional[Dict[str, Any]]:
@@ -179,7 +230,15 @@ class MProfitAsyncParser(AsyncBaseParser):
             name = name_elem.get_text(strip=True)
         
         if not name:
-            self.log.debug("name_not_found", html=str(product_element)[:200])
+            # Детальная диагностика: проверяем структуру HTML
+            has_item_title = product_element.select_one('.item-title') is not None
+            has_item_title_a = product_element.select_one('.item-title a') is not None
+            has_item_title_a_span = product_element.select_one('.item-title a span') is not None
+            self.log.warning("name_not_found", 
+                            html=str(product_element)[:300],
+                            has_item_title=has_item_title,
+                            has_item_title_a=has_item_title_a,
+                            has_item_title_a_span=has_item_title_a_span)
             return None
         
         info['name'] = name
@@ -214,8 +273,9 @@ class MProfitAsyncParser(AsyncBaseParser):
                     info['price'] = None
                     self.log.debug("price_not_found", name=name)
             else:
+                # Нет элемента .price вообще
                 info['price'] = None
-                self.log.debug("price_not_found", name=name)
+                self.log.debug("price_element_not_found", name=name)
         
         if price:
             info['price'] = price

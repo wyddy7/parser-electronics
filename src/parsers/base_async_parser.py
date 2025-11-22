@@ -403,19 +403,26 @@ class AsyncBaseParser(ABC):
             if original_match:
                 original_code = original_match.group(1)
             else:
-                # Если не нашли, пробуем найти артикул с пробелом (АКИП 9806/3)
-                # Улучшенный паттерн: поддерживает пробел перед дефисом/слэшем
+                # Если не нашли, пробуем найти артикул с пробелом и дефисом/слэшем (АКИП 9806/3)
                 spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[A-Za-z0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
                 spaced_match = spaced_pattern.match(original_text)
                 if spaced_match:
                     original_code = spaced_match.group(1).replace(' ', '')
                 else:
-                    # Fallback: первое слово
-                    original_code = original_text.split()[0] if original_text else ""
+                    # Паттерн для артикулов с пробелом БЕЗ дефиса/слэша (Agilent E4418B, HIOKI 3390)
+                    brand_model_pattern = re.compile(r'^([А-ЯA-ZЁ]+\s+[A-Za-z0-9]+)', re.IGNORECASE)
+                    brand_model_match = brand_model_pattern.match(original_text)
+                    if brand_model_match:
+                        original_code = brand_model_match.group(1)
+                    else:
+                        # Fallback: первое слово
+                        original_code = original_text.split()[0] if original_text else ""
         
         # Для найденного: берем до запятой, затем извлекаем артикул по паттерну
         found_parts = found.split(',')
         found_text = found_parts[0].strip() if found_parts else ""
+        # Убираем скобки и их содержимое (например, "(демонстрационный)")
+        found_text = re.sub(r'\([^)]*\)', '', found_text).strip()
         
         # Специальная обработка для Fluke в найденном тексте
         if found_text.startswith('Fluke'):
@@ -426,18 +433,44 @@ class AsyncBaseParser(ABC):
                 found_code = found_text.split()[0] if found_text else ""
         else:
             # Извлекаем артикул из найденного текста по паттерну
-            match = article_pattern.match(found_text)
+            # Используем search() вместо match(), так как артикул может быть в середине строки
+            # Например: "Указатель правильности чередования фаз CEM DT-902"
+            # Создаем паттерн БЕЗ ^ для поиска в любом месте строки
+            
+            # Паттерн 1: артикулы с дефисом/слэшем (DT-902, АКИП-2502)
+            article_search_pattern = re.compile(r'([А-ЯA-ZЁ]+(?:[0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+            match = article_search_pattern.search(found_text)
             if match:
                 found_code = match.group(1)
             else:
-                # Если паттерн не сработал, пробуем найти артикул с пробелом
-                spaced_pattern = re.compile(r'^([А-ЯA-ZЁ]+(?:\s+[A-Za-z0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
-                spaced_match = spaced_pattern.match(found_text)
+                # Паттерн 2: артикулы с пробелом и дефисом/слэшем (АКИП 9806/3)
+                spaced_pattern = re.compile(r'([А-ЯA-ZЁ]+(?:\s+[A-Za-z0-9]+)?[-/][0-9]+(?:[/][0-9]+)?)', re.IGNORECASE)
+                spaced_match = spaced_pattern.search(found_text)
                 if spaced_match:
                     found_code = spaced_match.group(1).replace(' ', '')
                 else:
-                    # Fallback: первое слово
-                    found_code = found_text.split()[0] if found_text else ""
+                    # Паттерн 3: артикулы с пробелом БЕЗ дефиса/слэша (Agilent E4418B, HIOKI 3390)
+                    # Ищем артикул в конце строки (обычно он там находится)
+                    # Формат: буквы + пробел + буквы/цифры (модель)
+                    words = found_text.split()
+                    if len(words) >= 2:
+                        # Проверяем последние 2 слова как потенциальный артикул
+                        last_two = ' '.join(words[-2:])
+                        # Паттерн: первое слово - буквы (бренд), второе - буквы/цифры (модель)
+                        brand_model_pattern = re.compile(r'^([A-ZА-ЯЁ][A-ZА-ЯЁa-zа-я0-9]*\s+[A-Za-z0-9]+)', re.IGNORECASE)
+                        if brand_model_pattern.match(last_two):
+                            found_code = last_two
+                        else:
+                            # Пробуем найти артикул в любом месте строки
+                            brand_model_pattern = re.compile(r'([A-ZА-ЯЁ][A-ZА-ЯЁa-zа-я0-9]*\s+[A-Za-z0-9]+)', re.IGNORECASE)
+                            all_matches = brand_model_pattern.findall(found_text)
+                            if all_matches:
+                                found_code = all_matches[-1]  # Берем последнее совпадение
+                            else:
+                                found_code = found_text.split()[0] if found_text else ""
+                    else:
+                        # Fallback: первое слово
+                        found_code = found_text.split()[0] if found_text else ""
         
         # Нормализуем для сравнения (нижний регистр, убираем ВСЕ пробелы и дефисы)
         # Также заменяем латинскую A на кириллическую А для унификации
@@ -449,8 +482,10 @@ class AsyncBaseParser(ABC):
             self.log.debug("name_match_check",
                           original=original,
                           original_code=original_code,
+                          orig_normalized=orig_normalized,
                           found=found,
                           found_code=found_code,
+                          found_normalized=found_normalized,
                           match=False,
                           reason="base_article_mismatch")
             return False
@@ -461,9 +496,28 @@ class AsyncBaseParser(ABC):
             # Есть модификация (например "TG", "без трекинг генератора" и т.д.)
             modification = original_words[1].lower().rstrip(',')  # Убираем запятую
             
-            # Если модификация короткая (1-3 символа) и является частью артикула - пропускаем проверку
+            # Проверяем, является ли второе слово частью артикула
+            # Нормализуем артикулы для сравнения (убираем пробелы, дефисы, приводим к нижнему регистру)
+            original_code_normalized = original_code.lower().replace(' ', '').replace('-', '').replace('a', 'а')
+            found_code_normalized = found_code.lower().replace(' ', '').replace('-', '').replace('a', 'а')
+            
+            # Если второе слово является частью извлеченного артикула - это не модификация, пропускаем проверку
+            if modification in original_code_normalized:
+                # Это часть артикула, не модификация - пропускаем проверку
+                self.log.info("name_match_check",
+                              original=original,
+                              original_code=original_code,
+                              original_code_normalized=original_code_normalized,
+                              found=found,
+                              found_code=found_code,
+                              found_code_normalized=found_code_normalized,
+                              match=True,
+                              reason="modification_is_part_of_article",
+                              modification=modification)
+                return True
+            
+            # Если модификация короткая (1-3 символа) и является частью найденного артикула - пропускаем проверку
             if len(modification) <= 3 and modification.isalnum():
-                found_code_normalized = found_code.lower().replace(' ', '').replace('-', '')
                 if modification in found_code_normalized:
                     # Это часть артикула, не модификация - пропускаем проверку
                     self.log.debug("name_match_check",
@@ -480,14 +534,15 @@ class AsyncBaseParser(ABC):
             found_name_lower = found.lower().replace(',', '')
             if modification not in found_name_lower:
                 # Модификация не найдена - это другой товар
-                self.log.debug("name_match_check",
+                self.log.info("name_match_check",
                               original=original,
                               original_code=original_code,
                               found=found,
                               found_code=found_code,
                               match=False,
                               reason="modification_mismatch",
-                              modification=modification)
+                              modification=modification,
+                              found_name_lower=found_name_lower)
                 return False
         
         # Все проверки пройдены
